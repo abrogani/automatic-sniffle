@@ -2,6 +2,6 @@
 | Name          | Status    |
 | :-----------  | :-------  |
 | SuperStream | 🟢 OK |
-| Sudo-Flix | 🟢 OK |
+| FlixHQ | 🔴 DOWN |
 | Stremio | 🟢 OK |
-| FlixHQ | 🟢 OK |
+| Sudo-Flix | 🟢 OK |
