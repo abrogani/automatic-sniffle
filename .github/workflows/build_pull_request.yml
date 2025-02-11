@@ -26,12 +26,47 @@ jobs:
           SUPERSTREAM_SECOND_API: ${{ secrets.SUPERSTREAM_SECOND_API }}
           SUPERSTREAM_THIRD_API: ${{ secrets.SUPERSTREAM_THIRD_API }}
           SUPERSTREAM_FOURTH_API: ${{ secrets.SUPERSTREAM_FOURTH_API }}
+          SUPERSTREAM_FIFTH_API: ${{ secrets.SUPERSTREAM_FIFTH_API }}
+          TMDB_API: ${{ secrets.TMDB_API }}
+          DUMP_API: ${{ secrets.DUMP_API }}
+          DUMP_KEY: ${{ secrets.DUMP_KEY }}
+          CRUNCHYROLL_BASIC_TOKEN: ${{ secrets.CRUNCHYROLL_BASIC_TOKEN }}
+          CRUNCHYROLL_REFRESH_TOKEN: ${{ secrets.CRUNCHYROLL_REFRESH_TOKEN }}
+          ZSHOW_API: ${{ secrets.ZSHOW_API }}
+          SFMOVIES_API: ${{ secrets.SFMOVIES_API }}
+          CINEMATV_API: ${{ secrets.CINEMATV_API }}
+          GHOSTX_API: ${{ secrets.GHOSTX_API }}
+          MOVIE_API: ${{ secrets.MOVIE_API }}
+          MultiMovies_API: ${{ secrets.MultiMovies_API }}
+          MovieDrive_API: ${{ secrets.MovieDrive_API }}
+          AsianDrama_API: ${{ secrets.AsianDrama_API }}
+          HIANIMEAPI: ${{ secrets.HIANIMEAPI }}
         run: |
           cd $GITHUB_WORKSPACE/src
           echo SUPERSTREAM_FIRST_API=$SUPERSTREAM_FIRST_API >> local.properties
           echo SUPERSTREAM_SECOND_API=$SUPERSTREAM_SECOND_API >> local.properties
           echo SUPERSTREAM_THIRD_API=$SUPERSTREAM_THIRD_API >> local.properties
           echo SUPERSTREAM_FOURTH_API=$SUPERSTREAM_FOURTH_API >> local.properties
+          echo SUPERSTREAM_FIFTH_API=$SUPERSTREAM_FIFTH_API >> local.properties
+          echo TMDB_API=$TMDB_API >> local.properties
+          echo DUMP_API=$DUMP_API >> local.properties
+          echo DUMP_KEY=$DUMP_KEY >> local.properties
+          echo CRUNCHYROLL_BASIC_TOKEN=$CRUNCHYROLL_BASIC_TOKEN >> local.properties
+          echo CRUNCHYROLL_REFRESH_TOKEN=$CRUNCHYROLL_REFRESH_TOKEN >> local.properties
+          echo ZSHOW_API=$ZSHOW_API >> local.properties
+          echo SFMOVIES_API=$SFMOVIES_API >> local.properties
+          echo CINEMATV_API=$CINEMATV_API >> local.properties
+          echo GHOSTX_API=$GHOSTX_API >> local.properties
+          echo MOVIE_API=$MOVIE_API >> local.properties
+          echo MultiMovies_API=$MultiMovies_API >> local.properties
+          echo MovieDrive_API=$MovieDrive_API >> local.properties
+          echo AsianDrama_API=$AsianDrama_API >> local.properties
+
+      - name: Initialize cloudstream.jar
+        run: |
+          cd $GITHUB_WORKSPACE/src
+          chmod +x gradlew
+          ./gradlew :CodeStream:getCSJar
 
       # Change `**/**/build/*.flx` if you've changed the providers file structure.
       - name: Build providers
