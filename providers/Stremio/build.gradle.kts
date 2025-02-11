@@ -16,7 +16,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.runtime:runtime")
 
-    implementation("io.coil-kt:coil-compose:2.5.0")
+    implementation("io.coil-kt.coil3:coil:3.0.0")
+    implementation("io.coil-kt.coil3:coil-compose:3.0.0")
     // ================= END: COMPOSE UI =================
 }
 
@@ -50,8 +51,9 @@ flxProvider {
 
     versionMajor = 1
     versionMinor = 2
-    versionPatch = 6
+    versionPatch = 7
     versionBuild = 0
+
 
     // Extra authors for specific provider
     // author(
