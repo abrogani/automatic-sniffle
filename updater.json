@@ -70,11 +70,11 @@
             }
         ],
         "id": "4d37807b37202d6",
-        "versionCode": 12600,
+        "versionCode": 12700,
         "description": "A flixclusive adapter for Stremio addons. Torrent addons, such as Torrentio, don't work without debrid accounts.",
         "buildUrl": "https://raw.githubusercontent.com/abrogani/automatic-sniffle/builds/Stremio.flx",
         "changelog": "### Fixes:\n- Remove built-in opensubs-v3 addon\n- Allow subtitles addons\n- Fix default metadata loading (Cinemata)",
-        "versionName": "1.2.6",
+        "versionName": "1.2.7",
         "name": "Stremio"
     },
     {
