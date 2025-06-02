@@ -6,7 +6,7 @@
         "providerType": {
             "type": "Movies, TV Shows, etc."
         },
-        "status": "Beta",
+        "status": "Working",
         "language": {
             "languageCode": "Multiple"
         },
@@ -18,11 +18,11 @@
             }
         ],
         "id": "e0db05e71b0c2db",
-        "versionCode": 200,
+        "versionCode": 10000,
         "description": "This is an experimental attempt for a CloudStream adapter.",
         "buildUrl": "https://raw.githubusercontent.com/abrogani/automatic-sniffle/builds/CodeStream.flx",
         "changelog": "Experimental",
-        "versionName": "0.0.2",
+        "versionName": "1.0.0",
         "name": "CodeStream"
     },
     {
@@ -50,6 +50,32 @@
         "changelog": "# v1.0.3 - patch2\n- update compose BOM to 2024.09.02",
         "versionName": "1.0.3",
         "name": "FlixHQ"
+    },
+    {
+        "iconUrl": "https://i3.wp.com/yt3.googleusercontent.com/ytc/AIdro_nCBArSmvOc6o-k2hTYpLtQMPrKqGtAw_nC20rxm70akA=s900-c-k-c0x00ffffff-no-rj?ssl=1",
+        "repositoryUrl": "https://github.com/abrogani/automatic-sniffle",
+        "adult": false,
+        "providerType": {
+            "type": "Movies, TV Shows, etc."
+        },
+        "status": "Working",
+        "language": {
+            "languageCode": "Multiple"
+        },
+        "authors": [
+            {
+                "image": "https://github.com/phisher98.png",
+                "name": "phisher98",
+                "socialLink": "https://github.com/phisher98"
+            }
+        ],
+        "id": "c0e2f412e86f751",
+        "versionCode": 10000,
+        "description": "A Flixclusive version of Phisher98's StreamPlay.\n\nREMINDER: Only works on PR-c62ada6 versions and above. WILL NOT WORK ON v2.1.3 stable!!!!!!",
+        "buildUrl": "https://raw.githubusercontent.com/abrogani/automatic-sniffle/builds/StreamPlay.flx",
+        "changelog": "# WILL NOT WORK ON v2.1.3 STABLE!!!!!!",
+        "versionName": "1.0.0",
+        "name": "StreamPlay"
     },
     {
         "iconUrl": "https://i.imgur.com/Hoq93zL.png",
