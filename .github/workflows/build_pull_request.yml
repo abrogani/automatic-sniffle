@@ -8,7 +8,7 @@ on: [pull_request]
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@master
@@ -40,7 +40,20 @@ jobs:
           MultiMovies_API: ${{ secrets.MultiMovies_API }}
           MovieDrive_API: ${{ secrets.MovieDrive_API }}
           AsianDrama_API: ${{ secrets.AsianDrama_API }}
-          HIANIMEAPI: ${{ secrets.HIANIMEAPI }}
+          Whvx_API: ${{ secrets.Whvx_API }}
+          WhvxAPI: ${{ secrets.WhvxAPI }}
+          SharmaflixApi: ${{ secrets.SharmaflixApi }}
+          SharmaflixApikey: ${{ secrets.SharmaflixApikey }}
+          WASMAPI: ${{ secrets.WASMAPI }}
+          WhvxT: ${{ secrets.WhvxT }}
+          Vidsrccc: ${{ secrets.Vidsrccc }}
+          StreamPlayAPI: ${{ secrets.StreamPlayAPI }}
+          PROXYAPI: ${{ secrets.PROXYAPI }}
+          KissKh: ${{ secrets.KissKh }}
+          KisskhSub: ${{ secrets.KisskhSub }}
+          GojoAPI: ${{ secrets.GojoAPI }}
+          ANICHI_API: ${{ secrets.ANICHI_API }}
+          CatflixAPI: ${{ secrets.CatflixAPI }}
         run: |
           cd $GITHUB_WORKSPACE/src
           echo SUPERSTREAM_FIRST_API=$SUPERSTREAM_FIRST_API >> local.properties
@@ -61,12 +74,20 @@ jobs:
           echo MultiMovies_API=$MultiMovies_API >> local.properties
           echo MovieDrive_API=$MovieDrive_API >> local.properties
           echo AsianDrama_API=$AsianDrama_API >> local.properties
-
-      - name: Initialize cloudstream.jar
-        run: |
-          cd $GITHUB_WORKSPACE/src
-          chmod +x gradlew
-          ./gradlew :CodeStream:getCSJar
+          echo Whvx_API=$Whvx_API >> local.properties
+          echo WhvxAPI=$WhvxAPI >> local.properties
+          echo SharmaflixApi=$SharmaflixApi >> local.properties
+          echo SharmaflixApikey=$SharmaflixApikey >> local.properties
+          echo WASMAPI=$WASMAPI >> local.properties
+          echo WhvxT=$WhvxT >> local.properties
+          echo Vidsrccc=$Vidsrccc >> local.properties
+          echo StreamPlayAPI=$StreamPlayAPI >> local.properties
+          echo PROXYAPI=$PROXYAPI >> local.properties
+          echo KissKh=$KissKh >> local.properties
+          echo KisskhSub=$KisskhSub >> local.properties
+          echo GojoAPI=$GojoAPI >> local.properties
+          echo ANICHI_API=$ANICHI_API >> local.properties
+          echo CatflixAPI=$CatflixAPI >> local.properties
 
       # Change `**/**/build/*.flx` if you've changed the providers file structure.
       - name: Build providers
