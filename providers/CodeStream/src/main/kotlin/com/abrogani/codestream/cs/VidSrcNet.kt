@@ -1,4 +1,4 @@
-
+@file:Suppress("DEPRECATION_ERROR")
 package com.abrogani.codestream.cs
 
 import com.lagradost.cloudstream3.SubtitleFile

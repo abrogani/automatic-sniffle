@@ -2,6 +2,7 @@ rootProject.name = "automatic-sniffler"
 
 include(
     "CodeStream",
+    "StreamPlay",
     "SuperStream",
     "FlixHQ",
     "Sudo-Flix",

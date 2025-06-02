@@ -44,6 +44,7 @@ import org.mozilla.javascript.Scriptable
 
 val session = Session(Requests().baseClient)
 
+@Suppress("DEPRECATION_ERROR")
 object CodeExtractor : CodeStream() {
     /*
         suspend fun invokeGoku(

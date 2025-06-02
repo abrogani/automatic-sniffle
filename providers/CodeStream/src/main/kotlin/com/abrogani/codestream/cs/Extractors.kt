@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION_ERROR")
 package com.abrogani.codestream.cs
 
 //import android.util.Log

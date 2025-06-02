@@ -1,8 +1,10 @@
+@file:Suppress("DEPRECATION_ERROR")
 package com.abrogani.codestream.cs
 
 //import com.abrogani.codestream.cs.CodeStream.Companion.hdmovies4uAPI
 import android.util.Base64
 import android.util.Log
+import com.abrogani.codestream.BuildConfig
 import com.abrogani.codestream.cs.CodeStream.Companion.anilistAPI
 import com.abrogani.codestream.cs.CodeStream.Companion.crunchyrollAPI
 import com.abrogani.codestream.cs.CodeStream.Companion.filmxyAPI
@@ -11,7 +13,6 @@ import com.abrogani.codestream.cs.CodeStream.Companion.hdmovies4uAPI
 import com.abrogani.codestream.cs.CodeStream.Companion.malsyncAPI
 import com.abrogani.codestream.cs.CodeStream.Companion.tvMoviesAPI
 import com.abrogani.codestream.cs.DumpUtils.queryApi
-import com.abrogani.codestream.BuildConfig
 import com.lagradost.cloudstream3.APIHolder.getCaptchaToken
 import com.lagradost.cloudstream3.APIHolder.unixTimeMS
 import com.lagradost.cloudstream3.SubtitleFile
