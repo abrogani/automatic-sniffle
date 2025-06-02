@@ -3,8 +3,9 @@
 #### List of available providers:
 | Name          | Status    |
 | :-----------  | :-------  |
-| FlixHQ | 🔴 DOWN |
-| Sudo-Flix | 🟢 OK |
-| CodeStream | 🔵 BETA |
-| Stremio | 🟢 OK |
 | SuperStream | 🟢 OK |
+| CodeStream | 🟢 OK |
+| Sudo-Flix | 🟢 OK |
+| StreamPlay | 🟢 OK |
+| FlixHQ | 🔴 DOWN |
+| Stremio | 🟢 OK |
