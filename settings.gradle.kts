@@ -7,6 +7,7 @@ include(
     "FlixHQ",
     "Sudo-Flix",
     "Stremio",
+    "LookMovie",
 )
 
 rootProject.children.forEach {
