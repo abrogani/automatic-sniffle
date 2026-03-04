@@ -70,6 +70,18 @@ android {
         buildConfigField("String", "SUPERSTREAM_SECOND_API", "\"${properties.getProperty("SUPERSTREAM_SECOND_API")}\"")
         buildConfigField("String", "StreamPlayAPI", "\"${properties.getProperty("StreamPlayAPI")}\"")
         buildConfigField("String", "PROXYAPI", "\"${properties.getProperty("PROXYAPI")}\"")
+        buildConfigField("String", "NuvFeb", "\"${properties.getProperty("NuvFeb")}\"")
+        buildConfigField("String", "KAIMEG", "\"${properties.getProperty("KAIMEG")}\"")
+        buildConfigField("String", "KAIENC", "\"${properties.getProperty("KAIENC")}\"")
+        buildConfigField("String", "KAISVA", "\"${properties.getProperty("KAISVA")}\"")
+        buildConfigField("String", "KAIDEC", "\"${properties.getProperty("KAIDEC")}\"")
+        buildConfigField("String", "Nuviostreams", "\"${properties.getProperty("Nuviostreams")}\"")
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_ALT", "\"${properties.getProperty("MOVIEBOX_SECRET_KEY_ALT")}\"")
+        buildConfigField("String", "MOVIEBOX_SECRET_KEY_DEFAULT", "\"${properties.getProperty("MOVIEBOX_SECRET_KEY_DEFAULT")}\"")
+        buildConfigField("String", "YFXDEC", "\"${properties.getProperty("YFXDEC")}\"")
+        buildConfigField("String", "YFXENC", "\"${properties.getProperty("YFXENC")}\"")
+        buildConfigField("String", "SUPERSTREAM_THIRD_API", "\"${properties.getProperty("SUPERSTREAM_FIRST_API")}\"")
+        buildConfigField("String", "SUPERSTREAM_FOURTH_API", "\"${properties.getProperty("SUPERSTREAM_SECOND_API")}\"")
     }
 }
 

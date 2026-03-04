@@ -1,103 +1,76 @@
 package com.phisher98
 
-import android.annotation.SuppressLint
+import android.net.Uri
 import android.os.Build
 import androidx.annotation.RequiresApi
-import app.cash.quickjs.QuickJs
+import com.abrogani.streamplay.BuildConfig
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.phisher98.DumpUtils.queryApi
-import com.phisher98.StreamPlay.Companion.anilistAPI
-import com.phisher98.StreamPlay.Companion.filmxyAPI
-import com.phisher98.StreamPlay.Companion.fourthAPI
-import com.phisher98.StreamPlay.Companion.gdbot
-import com.phisher98.StreamPlay.Companion.hdmovies4uAPI
-import com.phisher98.StreamPlay.Companion.malsyncAPI
-import com.phisher98.StreamPlay.Companion.thrirdAPI
 import com.google.gson.Gson
 import com.lagradost.api.Log
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.APIHolder.getCaptchaToken
 import com.lagradost.cloudstream3.APIHolder.unixTimeMS
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.amapIndexed
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.base64Decode
+import com.lagradost.cloudstream3.base64DecodeArray
+import com.lagradost.cloudstream3.base64Encode
+import com.lagradost.cloudstream3.fixTitle
 import com.lagradost.cloudstream3.mvvm.logError
-import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.runAllAsync
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
-import com.lagradost.nicehttp.NiceResponse
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.getAndUnpack
+import com.lagradost.cloudstream3.utils.getQualityFromName
+import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.nicehttp.RequestBodyTypes
+import com.phisher98.StreamPlay.Companion.anilistAPI
+import com.phisher98.StreamPlay.Companion.fourthAPI
+import com.phisher98.StreamPlay.Companion.thrirdAPI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import okhttp3.FormBody
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import java.math.BigInteger
-import java.net.*
-import java.nio.charset.StandardCharsets
-import java.security.*
-import java.security.spec.PKCS8EncodedKeySpec
-import java.security.spec.X509EncodedKeySpec
+import java.net.URI
+import java.net.URL
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.spec.KeySpec
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Arrays
+import java.util.Base64
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import javax.crypto.Cipher
-import javax.crypto.SecretKey
+import javax.crypto.Mac
+import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+import kotlin.experimental.xor
 import kotlin.math.min
-import com.abrogani.streamplay.BuildConfig
 
-var filmxyCookies: Map<String, String>? = null
-var sfServer: String? = null
-
-val encodedIndex = arrayOf(
-    "GamMovies",
-    "JSMovies",
-    "BlackMovies",
-    "CodexMovies",
-    "RinzryMovies",
-    "EdithxMovies",
-    "XtremeMovies",
-    "PapaonMovies[1]",
-    "PapaonMovies[2]",
-    "JmdkhMovies",
-    "RubyMovies",
-    "ShinobiMovies",
-    "VitoenMovies",
-)
-
-val lockedIndex = arrayOf(
-    "CodexMovies",
-    "EdithxMovies",
-)
-
-val mkvIndex = arrayOf(
-    "EdithxMovies",
-    "JmdkhMovies",
-)
-
-val untrimmedIndex = arrayOf(
-    "PapaonMovies[1]",
-    "PapaonMovies[2]",
-    "EdithxMovies",
-)
-
-val needRefererIndex = arrayOf(
-    "ShinobiMovies",
-)
-
-val ddomainIndex = arrayOf(
-    "RinzryMovies",
-    "ShinobiMovies"
-)
 
 val mimeType = arrayOf(
     "video/x-matroska",
@@ -105,332 +78,18 @@ val mimeType = arrayOf(
     "video/x-msvideo"
 )
 
-fun Document.getMirrorLink(): String? {
-    return this.select("div.mb-4 a").randomOrNull()
-        ?.attr("href")
-}
-
-fun Document.getMirrorServer(server: Int): String {
-    return this.select("div.text-center a:contains(Server $server)").attr("href")
-}
-
-suspend fun extractMirrorUHD(url: String, ref: String): String? {
-    var baseDoc = app.get(fixUrl(url, ref)).document
-
-    var downLink = baseDoc.getMirrorLink()
-    run lit@{
-        (1..2).forEach {
-            if (downLink != null) return@lit
-            val server = baseDoc.getMirrorServer(it.plus(1))
-            baseDoc = app.get(fixUrl(server, ref)).document
-            downLink = baseDoc.getMirrorLink()
-        }
-    }
-    return if (downLink?.contains("workers.dev") == true) downLink else base64Decode(
-        downLink?.substringAfter(
-            "download?url="
-        ) ?: return null
-    )
-}
-
-suspend fun extractInstantUHD(url: String): String? {
-    val host = getBaseUrl(url)
-    val body = FormBody.Builder()
-        .addEncoded("keys", url.substringAfter("url="))
-        .build()
-    return app.post(
-        "$host/api", requestBody = body, headers = mapOf(
-            "x-token" to URI(url).host
-        ), referer = "$host/"
-    ).parsedSafe<Map<String, String>>()?.get("url")
-}
-
-fun replaceHubclouddomain(url: String): String {
-    return try {
-        val originalUrl = URL(url)
-        val domainParts = originalUrl.host.split(".").toMutableList()
-        if (domainParts.size > 1) {
-            domainParts[domainParts.lastIndex] = "dad"
-            val newDomain = domainParts.joinToString(".")
-
-            // Construct the new URL with the updated domain
-            URL(originalUrl.protocol, newDomain, originalUrl.port, originalUrl.file).toString()
-        } else {
-            throw IllegalArgumentException("Invalid domain structure in URL")
-        }
-    } catch (e: Exception) {
-        "Invalid URL: ${e.message}"
-    }
-}
-
-suspend fun extractDirectUHD(url: String, niceResponse: NiceResponse): String? {
-    val document = niceResponse.document
-    val script = document.selectFirst("script:containsData(cf_token)")?.data() ?: return null
-    val actionToken = script.substringAfter("\"key\", \"").substringBefore("\");")
-    val cfToken = script.substringAfter("cf_token = \"").substringBefore("\";")
-    val body = FormBody.Builder()
-        .addEncoded("action", "direct")
-        .addEncoded("key", actionToken)
-        .addEncoded("action_token", cfToken)
-        .build()
-    val cookies = mapOf("PHPSESSID" to "${niceResponse.cookies["PHPSESSID"]}")
-    val direct = app.post(
-        url,
-        requestBody = body,
-        cookies = cookies,
-        referer = url,
-        headers = mapOf(
-            "x-token" to "driveleech.org"
-        )
-    ).parsedSafe<Map<String, String>>()?.get("url")
-
-    return app.get(
-        direct ?: return null, cookies = cookies,
-        referer = url
-    ).text.substringAfter("worker_url = '").substringBefore("';")
-
-}
-
-
-suspend fun extractBackupUHD(url: String): String? {
-    val resumeDoc = app.get(url)
-
-    val script = resumeDoc.document.selectFirst("script:containsData(FormData.)")?.data()
-
-    val ssid = resumeDoc.cookies["PHPSESSID"]
-    val baseIframe = getBaseUrl(url)
-    val fetchLink =
-        script?.substringAfter("fetch('")?.substringBefore("',")?.let { fixUrl(it, baseIframe) }
-    val token = script?.substringAfter("'token', '")?.substringBefore("');")
-
-    val body = FormBody.Builder()
-        .addEncoded("token", "$token")
-        .build()
-    val cookies = mapOf("PHPSESSID" to "$ssid")
-
-    val result = app.post(
-        fetchLink ?: return null,
-        requestBody = body,
-        headers = mapOf(
-            "Accept" to "*/*",
-            "Origin" to baseIframe,
-            "Sec-Fetch-Site" to "same-origin"
-        ),
-        cookies = cookies,
-        referer = url
-    ).text
-    return tryParseJson<UHDBackupUrl>(result)?.url
-}
-
-@Suppress("NAME_SHADOWING")
-suspend fun extractResumeUHD(url: String): String {
-    app.get("https://driveleech.org$url").document.let {
-        val url = it.selectFirst("a.btn.btn-success")?.attr("href").toString()
-        return url
-    }
-}
-
-suspend fun extractCFUHD(url: String): MutableList<String> {
-    val CFlinks = mutableListOf<String>()
-    app.get("https://driveleech.org$url?type=1").document.let {
-        CFlinks += it.select("div.mb-4 a").attr("href")
-    }
-    app.get("https://driveleech.org$url?type=2").document.let {
-        CFlinks += it.select("div.mb-4 a").attr("href")
-    }
-    return CFlinks
-}
-
-suspend fun extractPixeldrainUHD(url: String): String {
-    app.get("https://driveleech.org$url").document.let {
-        return it.selectFirst("a.btn.btn-outline-info:contains(pixel)")?.attr("href").toString()
-    }
-}
-
-suspend fun extractResumeTop(url: String): String {
-    app.get("https://driveleech.org$url").document.let {
-        val link = it.selectFirst("a.btn.btn-success")?.attr("href").toString()
-        return link
-    }
-}
-
-suspend fun extractGdbot(url: String): String? {
-    val headers = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    )
-    val res = app.get(
-        "$gdbot/", headers = headers
-    )
-    val token = res.document.selectFirst("input[name=_token]")?.attr("value")
-    val cookiesSet = res.headers.filter { it.first == "set-cookie" }
-    val xsrf =
-        cookiesSet.find { it.second.contains("XSRF-TOKEN") }?.second?.substringAfter("XSRF-TOKEN=")
-            ?.substringBefore(";")
-    val session =
-        cookiesSet.find { it.second.contains("gdtot_proxy_session") }?.second?.substringAfter("gdtot_proxy_session=")
-            ?.substringBefore(";")
-
-    val cookies = mapOf(
-        "gdtot_proxy_session" to "$session",
-        "XSRF-TOKEN" to "$xsrf"
-    )
-    val requestFile = app.post(
-        "$gdbot/file", data = mapOf(
-            "link" to url,
-            "_token" to "$token"
-        ), headers = headers, referer = "$gdbot/", cookies = cookies
-    ).document
-
-    return requestFile.selectFirst("div.mt-8 a.float-right")?.attr("href")
-}
-
-suspend fun extractDirectDl(url: String): String? {
-    val iframe = app.get(url).document.selectFirst("li.flex.flex-col.py-6 a:contains(Direct DL)")
-        ?.attr("href")
-    val request = app.get(iframe ?: return null)
-    val driveDoc = request.document
-    val token = driveDoc.select("section#generate_url").attr("data-token")
-    val uid = driveDoc.select("section#generate_url").attr("data-uid")
-
-    val ssid = request.cookies["PHPSESSID"]
-    val body =
-        """{"type":"DOWNLOAD_GENERATE","payload":{"uid":"$uid","access_token":"$token"}}""".toRequestBody(
-            RequestBodyTypes.JSON.toMediaTypeOrNull()
-        )
-
-    val json = app.post(
-        "https://rajbetmovies.com/action", requestBody = body, headers = mapOf(
-            "Accept" to "application/json, text/plain, */*",
-            "Cookie" to "PHPSESSID=$ssid",
-            "X-Requested-With" to "xmlhttprequest"
-        ), referer = request.url
-    ).text
-    return tryParseJson<DirectDl>(json)?.download_url
-}
+val M3U8_HEADERS = mapOf(
+    "User-Agent" to "Mozilla/5.0 (Android) ExoPlayer",
+    "Accept" to "*/*",
+    "Accept-Encoding" to "identity",
+    "Connection" to "keep-alive",
+)
 
 suspend fun extractMovieAPIlinks(serverid: String, movieid: String, MOVIE_API: String): String {
     val link =
-        app.get("$MOVIE_API/ajax/get_stream_link?id=$serverid&movie=$movieid").document.toString()
+        app.get("$MOVIE_API/ajax/get_stream_link?id=$serverid&movie=$movieid").documentLarge.toString()
             .substringAfter("link\":\"").substringBefore("\",")
     return link
-}
-
-suspend fun extractDrivebot(url: String): String? {
-    val iframeDrivebot =
-        app.get(url).document.selectFirst("li.flex.flex-col.py-6 a:contains(Drivebot)")
-            ?.attr("href") ?: return null
-    return getDrivebotLink(iframeDrivebot)
-}
-
-suspend fun extractGdflix(url: String): String? {
-    val iframeGdflix =
-        if (!url.contains("gdflix")) app.get(url).document.selectFirst("li.flex.flex-col.py-6 a:contains(GDFlix Direct)")
-            ?.attr("href") ?: return null else url
-    val base = getBaseUrl(iframeGdflix)
-
-    val req = app.get(iframeGdflix).document.selectFirst("script:containsData(replace)")?.data()
-        ?.substringAfter("replace(\"")
-        ?.substringBefore("\")")?.let {
-            app.get(fixUrl(it, base))
-        } ?: return null
-
-    val iframeDrivebot2 = req.document.selectFirst("a.btn.btn-outline-warning")?.attr("href")
-    return getDrivebotLink(iframeDrivebot2)
-
-//    val reqUrl = req.url
-//    val ssid = req.cookies["PHPSESSID"]
-//    val script = req.document.selectFirst("script:containsData(formData =)")?.data()
-//    val key = Regex("append\\(\"key\", \"(\\S+?)\"\\);").find(script ?: return null)?.groupValues?.get(1)
-//
-//    val body = FormBody.Builder()
-//        .addEncoded("action", "direct")
-//        .addEncoded("key", "$key")
-//        .addEncoded("action_token", "cf_token")
-//        .build()
-//
-//    val gdriveUrl = app.post(
-//        reqUrl, requestBody = body,
-//        cookies = mapOf("PHPSESSID" to "$ssid"),
-//        headers = mapOf(
-//            "x-token" to URI(reqUrl).host
-//        )
-//    ).parsedSafe<Gdflix>()?.url
-//
-//    return getDirectGdrive(gdriveUrl ?: return null)
-
-}
-
-suspend fun getDrivebotLink(url: String?): String? {
-    val driveDoc = app.get(url ?: return null)
-
-    val ssid = driveDoc.cookies["PHPSESSID"]
-    val script = driveDoc.document.selectFirst("script:containsData(var formData)")?.data()
-
-    val baseUrl = getBaseUrl(url)
-    val token = script?.substringAfter("'token', '")?.substringBefore("');")
-    val link =
-        script?.substringAfter("fetch('")?.substringBefore("',").let { "$baseUrl$it" }
-
-    val body = FormBody.Builder()
-        .addEncoded("token", "$token")
-        .build()
-    val cookies = mapOf("PHPSESSID" to "$ssid")
-
-    val file = app.post(
-        link,
-        requestBody = body,
-        headers = mapOf(
-            "Accept" to "*/*",
-            "Origin" to baseUrl,
-            "Sec-Fetch-Site" to "same-origin"
-        ),
-        cookies = cookies,
-        referer = url
-    ).parsedSafe<DriveBotLink>()?.url ?: return null
-
-    return if (file.startsWith("http")) file else app.get(
-        fixUrl(
-            file,
-            baseUrl
-        )
-    ).document.selectFirst("script:containsData(window.open)")
-        ?.data()?.substringAfter("window.open('")?.substringBefore("')")
-}
-
-suspend fun extractOiya(url: String): String? {
-    return app.get(url).document.selectFirst("div.wp-block-button a")?.attr("href")
-}
-
-fun deobfstr(hash: String, index: String): String {
-    var result = ""
-    for (i in hash.indices step 2) {
-        val j = hash.substring(i, i + 2)
-        result += (j.toInt(16) xor index[(i / 2) % index.length].code).toChar()
-    }
-    return result
-}
-
-//EmbedSu
-
-fun EmbedSuitemparseJson(jsonString: String): List<EmbedsuItem> {
-    val gson = Gson()
-    return gson.fromJson(jsonString, Array<EmbedsuItem>::class.java).toList()
-}
-
-fun encodeQuery(query: String): String {
-    return URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-}
-
-fun fixUrlEncoding(url: String): String {
-    // Extract query parameters from the URL (everything after the "?")
-    val baseUrl = url.substringBefore("?")
-    val query = url.substringAfter("?")
-
-    // Encode the query string
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-
-    // Ensure special characters in the query string are handled correctly (e.g., %20 for spaces, %26 for &)
-    return "$baseUrl?$encodedQuery"
 }
 
 suspend fun getDirectGdrive(url: String): String {
@@ -442,7 +101,7 @@ suspend fun getDirectGdrive(url: String): String {
         }&export=download"
     }
 
-    val doc = app.get(fixUrl).document
+    val doc = app.get(fixUrl).documentLarge
     val form = doc.select("form#download-form").attr("action")
     val uc = doc.select("input#uc-download-link").attr("value")
     return app.post(
@@ -451,216 +110,6 @@ suspend fun getDirectGdrive(url: String): String {
         )
     ).url
 
-}
-
-suspend fun invokeSmashyFfix(
-    name: String,
-    url: String,
-    ref: String,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit,
-) {
-    val json = app.get(url, referer = ref, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
-        .parsedSafe<SmashySources>()
-    json?.sourceUrls?.map {
-        M3u8Helper.generateM3u8(
-            "Smashy [$name]",
-            it,
-            ""
-        ).forEach(callback)
-    }
-
-    json?.subtitleUrls?.split(",")?.map { sub ->
-        val lang = "\\[(.*)]".toRegex().find(sub)?.groupValues?.get(1)
-        val subUrl = sub.replace("[$lang]", "").trim()
-        subtitleCallback.invoke(
-            SubtitleFile(
-                lang ?: return@map,
-                subUrl
-            )
-        )
-    }
-
-}
-
-suspend fun invokeSmashySu(
-    name: String,
-    url: String,
-    ref: String,
-    callback: (ExtractorLink) -> Unit,
-) {
-    val json = app.get(url, referer = ref, headers = mapOf("X-Requested-With" to "XMLHttpRequest"))
-        .parsedSafe<SmashySources>()
-    json?.sourceUrls?.firstOrNull()?.removeSuffix(",")?.split(",")?.forEach { links ->
-        val quality = Regex("\\[(\\S+)]").find(links)?.groupValues?.getOrNull(1) ?: return@forEach
-        val trimmedLink = links.removePrefix("[$quality]").trim()
-        callback.invoke(
-            newExtractorLink(
-                "Smashy [$name]",
-                "Smashy [$name]",
-                trimmedLink,
-                INFER_TYPE
-            )
-            {
-                this.quality=getQualityFromName(quality)
-            }
-        )
-    }
-}
-
-suspend fun getDumpIdAndType(title: String?, year: Int?, season: Int?): Pair<String?, Int?> {
-    val res = tryParseJson<DumpQuickSearchData>(
-        queryApi(
-            "POST",
-            "${BuildConfig.DUMP_API}/search/searchWithKeyWord",
-            mapOf(
-                "searchKeyWord" to "$title",
-                "size" to "50",
-            )
-        )
-    )?.searchResults
-
-    val media = if (res?.size == 1) {
-        res.firstOrNull()
-    } else {
-        res?.find {
-            when (season) {
-                null -> {
-                    it.name.equals(
-                        title,
-                        true
-                    ) && it.releaseTime == "$year" && it.domainType == 0
-                }
-
-                1 -> {
-                    it.name?.contains(
-                        "$title",
-                        true
-                    ) == true && (it.releaseTime == "$year" || it.name.contains(
-                        "Season $season",
-                        true
-                    )) && it.domainType == 1
-                }
-
-                else -> {
-                    it.name?.contains(Regex("(?i)$title\\s?($season|${season.toRomanNumeral()}|Season\\s$season)")) == true && it.releaseTime == "$year" && it.domainType == 1
-                }
-            }
-        }
-    }
-
-    return media?.id to media?.domainType
-
-}
-
-suspend fun fetchDumpEpisodes(id: String, type: String, episode: Int?): EpisodeVo? {
-    return tryParseJson<DumpMediaDetail>(
-        queryApi(
-            "GET",
-            "${BuildConfig.DUMP_API}/movieDrama/get",
-            mapOf(
-                "category" to type,
-                "id" to id,
-            )
-        )
-    )?.episodeVo?.find {
-        it.seriesNo == (episode ?: 0)
-    }
-}
-
-suspend fun invokeDrivetot(
-    url: String,
-    tags: String? = null,
-    size: String? = null,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit,
-) {
-    val res = app.get(url)
-    val data = res.document.select("form input").associate { it.attr("name") to it.attr("value") }
-    app.post(res.url, data = data, cookies = res.cookies).document.select("div.card-body a")
-        .amap { ele ->
-            val href = base64Decode(ele.attr("href").substringAfterLast("/")).let {
-                if (it.contains("hubcloud.lol")) it.replace("hubcloud.lol", "hubcloud.in") else it
-            }
-            loadExtractor(href, "$hdmovies4uAPI/", subtitleCallback) { link ->
-                CoroutineScope(Dispatchers.IO).launch {
-                    callback.invoke(
-                        newExtractorLink(
-                            link.source,
-                            "${link.name} $tags [$size]",
-                            link.url,
-                        ) {
-                            this.referer = link.referer
-                            this.quality = link.quality
-                            this.type = link.type
-                            this.headers = link.headers
-                            this.extractorData = link.extractorData
-                        }
-                    )
-                }
-            }
-        }
-}
-
-suspend fun bypassBqrecipes(url: String): String? {
-    var res = app.get(url)
-    var location = res.text.substringAfter(".replace('").substringBefore("');")
-    var cookies = res.cookies
-    res = app.get(location, cookies = cookies)
-    cookies = cookies + res.cookies
-    val document = res.document
-    location = document.select("form#recaptcha").attr("action")
-    val data =
-        document.select("form#recaptcha input").associate { it.attr("name") to it.attr("value") }
-    res = app.post(location, data = data, cookies = cookies)
-    location = res.document.selectFirst("a#messagedown")?.attr("href") ?: return null
-    cookies = (cookies + res.cookies).minus("var")
-    return app.get(location, cookies = cookies, allowRedirects = false).headers["location"]
-}
-
-suspend fun bypassOuo(url: String?): String? {
-    var res = session.get(url ?: return null)
-    run lit@{
-        (1..2).forEach { _ ->
-            if (res.headers["location"] != null) return@lit
-            val document = res.document
-            val nextUrl = document.select("form").attr("action")
-            val data = document.select("form input").mapNotNull {
-                it.attr("name") to it.attr("value")
-            }.toMap().toMutableMap()
-            val captchaKey =
-                document.select("script[src*=https://www.google.com/recaptcha/api.js?render=]")
-                    .attr("src").substringAfter("render=")
-            val token = getCaptchaToken(url, captchaKey)
-            data["x-token"] = token ?: ""
-            res = session.post(
-                nextUrl,
-                data = data,
-                headers = mapOf("content-type" to "application/x-www-form-urlencoded"),
-                allowRedirects = false
-            )
-        }
-    }
-
-    return res.headers["location"]
-}
-
-suspend fun bypassFdAds(url: String?): String? {
-    val directUrl =
-        app.get(url ?: return null, verify = false).document.select("a#link").attr("href")
-            .substringAfter("/go/")
-            .let { base64Decode(it) }
-    val doc = app.get(directUrl, verify = false).document
-    val lastDoc = app.post(
-        doc.select("form#landing").attr("action"),
-        data = mapOf("go" to doc.select("form#landing input").attr("value")),
-        verify = false
-    ).document
-    val json = lastDoc.select("form#landing input[name=newwpsafelink]").attr("value")
-        .let { base64Decode(it) }
-    val finalJson =
-        tryParseJson<FDAds>(json)?.linkr?.substringAfter("redirect=")?.let { base64Decode(it) }
-    return tryParseJson<Safelink>(finalJson)?.safelink
 }
 
 suspend fun bypassHrefli(url: String): String? {
@@ -673,198 +122,65 @@ suspend fun bypassHrefli(url: String): String? {
     }
 
     val host = getBaseUrl(url)
-    var res = app.get(url).document
+    var res = app.get(url).documentLarge
     var formUrl = res.getFormUrl()
     var formData = res.getFormData()
 
-    res = app.post(formUrl, data = formData).document
+    res = app.post(formUrl, data = formData).documentLarge
     formUrl = res.getFormUrl()
     formData = res.getFormData()
 
-    res = app.post(formUrl, data = formData).document
+    res = app.post(formUrl, data = formData).documentLarge
     val skToken = res.selectFirst("script:containsData(?go=)")?.data()?.substringAfter("?go=")
         ?.substringBefore("\"") ?: return null
     val driveUrl = app.get(
         "$host?go=$skToken", cookies = mapOf(
             skToken to "${formData["_wp_http2"]}"
         )
-    ).document.selectFirst("meta[http-equiv=refresh]")?.attr("content")?.substringAfter("url=")
+    ).documentLarge.selectFirst("meta[http-equiv=refresh]")?.attr("content")?.substringAfter("url=")
     val path = app.get(driveUrl ?: return null).text.substringAfter("replace(\"")
         .substringBefore("\")")
     if (path == "/404") return null
     return fixUrl(path, getBaseUrl(driveUrl))
 }
 
-suspend fun getTvMoviesServer(url: String, season: Int?, episode: Int?): Pair<String, String?>? {
-
-    val req = app.get(url)
-    if (!req.isSuccessful) return null
-    val doc = req.document
-
-    return if (season == null) {
-        doc.select("table.wp-block-table tr:last-child td:first-child").text() to
-                doc.selectFirst("table.wp-block-table tr a")?.attr("href").let { link ->
-                    app.get(link ?: return null).document.select("div#text-url a")
-                        .mapIndexed { index, element ->
-                            element.attr("href") to element.parent()?.textNodes()?.getOrNull(index)
-                                ?.text()
-                        }.filter { it.second?.contains("Subtitles", true) == false }
-                        .map { it.first }
-                }.lastOrNull()
-    } else {
-        doc.select("div.vc_tta-panels div#Season-$season table.wp-block-table tr:last-child td:first-child")
-            .text() to
-                doc.select("div.vc_tta-panels div#Season-$season table.wp-block-table tr a")
-                    .mapNotNull { ele ->
-                        app.get(ele.attr("href")).document.select("div#text-url a")
-                            .mapIndexed { index, element ->
-                                element.attr("href") to element.parent()?.textNodes()
-                                    ?.getOrNull(index)?.text()
-                            }.find { it.second?.contains("Episode $episode", true) == true }?.first
-                    }.lastOrNull()
+suspend fun cinematickitBypass(url: String): String? {
+    return try {
+        val cleanedUrl = url.replace("&#038;", "&")
+        val encodedLink = cleanedUrl.substringAfter("safelink=").substringBefore("-")
+        if (encodedLink.isEmpty()) return null
+        val decodedUrl = base64Decode(encodedLink)
+        val doc = app.get(decodedUrl).documentLarge
+        val goValue = doc.select("form#landing input[name=go]").attr("value")
+        if (goValue.isBlank()) return null
+        val decodedGoUrl = base64Decode(goValue).replace("&#038;", "&")
+        val responseDoc = app.get(decodedGoUrl).documentLarge
+        val script = responseDoc.select("script").firstOrNull { it.data().contains("window.location.replace") }?.data() ?: return null
+        val regex = Regex("""window\.location\.replace\s*\(\s*["'](.+?)["']\s*\)\s*;?""")
+        val match = regex.find(script) ?: return null
+        val redirectPath = match.groupValues[1]
+        return if (redirectPath.startsWith("http")) redirectPath else URI(decodedGoUrl).let { "${it.scheme}://${it.host}$redirectPath" }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }
 
-suspend fun getSfServer() = sfServer ?: fetchSfServer().also { sfServer = it }
 
-suspend fun fetchSfServer(): String {
-    return app.get("https://raw.githubusercontent.com/hexated/cloudstream-resources/main/sfmovies_server").text
-}
-
-suspend fun getFilmxyCookies(url: String) =
-    filmxyCookies ?: fetchFilmxyCookies(url).also { filmxyCookies = it }
-
-suspend fun fetchFilmxyCookies(url: String): Map<String, String> {
-
-    val defaultCookies =
-        mutableMapOf("G_ENABLED_IDPS" to "google", "true_checker" to "1", "XID" to "1")
-    session.get(
-        url,
-        headers = mapOf(
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-        ),
-        cookies = defaultCookies,
-    )
-    val phpsessid = session.baseClient.cookieJar.loadForRequest(url.toHttpUrl())
-        .first { it.name == "PHPSESSID" }.value
-    defaultCookies["PHPSESSID"] = phpsessid
-
-    val userNonce =
-        app.get(
-            "$filmxyAPI/login/?redirect_to=$filmxyAPI/",
-            cookies = defaultCookies
-        ).document.select("script")
-            .find { it.data().contains("var userNonce") }?.data()?.let {
-                Regex("var\\suserNonce.*?\"(\\S+?)\";").find(it)?.groupValues?.get(1)
-            }
-
-    val cookieUrl = "${filmxyAPI}/wp-admin/admin-ajax.php"
-
-    session.post(
-        cookieUrl,
-        data = mapOf(
-            "action" to "guest_login",
-            "nonce" to "$userNonce",
-        ),
-        headers = mapOf(
-            "X-Requested-With" to "XMLHttpRequest",
-        ),
-        cookies = defaultCookies
-    )
-    val cookieJar = session.baseClient.cookieJar.loadForRequest(cookieUrl.toHttpUrl())
-        .associate { it.name to it.value }.toMutableMap()
-
-    return cookieJar.plus(defaultCookies)
-}
-
-fun Document.findTvMoviesIframe(): String? {
-    return this.selectFirst("script:containsData(var seconds)")?.data()?.substringAfter("href='")
-        ?.substringBefore("'>")
-}
-
-//modified code from https://github.com/jmir1/aniyomi-extensions/blob/master/src/all/kamyroll/src/eu/kanade/tachiyomi/animeextension/all/kamyroll/AccessTokenInterceptor.kt
-//suspend fun getCrunchyrollToken(): CrunchyrollAccessToken {
-//    val client = app.baseClient.newBuilder()
-//        .proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("cr-unblocker.us.to", 1080)))
-//        .build()
-//
-//    Authenticator.setDefault(object : Authenticator() {
-//        override fun getPasswordAuthentication(): PasswordAuthentication {
-//            return PasswordAuthentication("crunblocker", "crunblocker".toCharArray())
-//        }
-//    })
-//
-//    val request = requestCreator(
-//        method = "POST",
-//        url = "$crunchyrollAPI/auth/v1/token",
-//        headers = mapOf(
-//            "User-Agent" to "Crunchyroll/3.26.1 Android/11 okhttp/4.9.2",
-//            "Content-Type" to "application/x-www-form-urlencoded",
-//            "Authorization" to "Basic ${BuildConfig.CRUNCHYROLL_BASIC_TOKEN}"
-//        ),
-//        data = mapOf(
-//            "refresh_token" to app.get(BuildConfig.CRUNCHYROLL_REFRESH_TOKEN).text,
-//            "grant_type" to "refresh_token",
-//            "scope" to "offline_access"
-//        )
-//    )
-//
-//    val token = tryParseJson<CrunchyrollToken>(client.newCall(request).execute().body.string())
-//    val headers = mapOf("Authorization" to "${token?.tokenType} ${token?.accessToken}")
-//    val cms =
-//        app.get("$crunchyrollAPI/index/v2", headers = headers).parsedSafe<CrunchyrollToken>()?.cms
-//    return CrunchyrollAccessToken(
-//        token?.accessToken,
-//        token?.tokenType,
-//        cms?.bucket,
-//        cms?.policy,
-//        cms?.signature,
-//        cms?.key_pair_id,
-//    )
-//}
-
-suspend fun getCrunchyrollId(aniId: String?): String? {
-    val query = """
-        query media(${'$'}id: Int, ${'$'}type: MediaType, ${'$'}isAdult: Boolean) {
-          Media(id: ${'$'}id, type: ${'$'}type, isAdult: ${'$'}isAdult) {
-            id
-            externalLinks {
-              id
-              site
-              url
-              type
-            }
-          }
-        }
-    """.trimIndent().trim()
-
-    val variables = mapOf(
-        "id" to aniId,
-        "isAdult" to false,
-        "type" to "ANIME",
-    )
-
-    val data = mapOf(
-        "query" to query,
-        "variables" to variables
-    ).toJson().toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull())
-
-    val externalLinks = app.post(anilistAPI, requestBody = data)
-        .parsedSafe<AnilistResponses>()?.data?.Media?.externalLinks
-
-    return (externalLinks?.find { it.site == "VRV" }
-        ?: externalLinks?.find { it.site == "Crunchyroll" })?.url?.let {
-        app.get(it).url.substringAfter("/series/").substringBefore("/")
+@RequiresApi(Build.VERSION_CODES.O)
+suspend fun cinematickitloadBypass(url: String): String? {
+    return try {
+        val cleanedUrl = url.replace("&#038;", "&")
+        val encodedLink = cleanedUrl.substringAfter("safelink=").substringBefore("-")
+        if (encodedLink.isEmpty()) return null
+        val decodedUrl = base64Decode(encodedLink)
+        val doc = app.get(decodedUrl).documentLarge
+        val goValue = doc.select("form#landing input[name=go]").attr("value")
+        return base64Decode(goValue)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
-}
-
-suspend fun getCrunchyrollIdFromMalSync(aniId: String?): String? {
-    val res = app.get("$malsyncAPI/mal/anime/$aniId").parsedSafe<MalSyncRes>()?.Sites
-    val vrv = res?.get("Vrv")?.map { it.value }?.firstOrNull()?.get("url")
-    val crunchyroll = res?.get("Vrv")?.map { it.value }?.firstOrNull()?.get("url")
-    val regex = Regex("series/(\\w+)/?")
-    return regex.find("$vrv")?.groupValues?.getOrNull(1)
-        ?: regex.find("$crunchyroll")?.groupValues?.getOrNull(1)
 }
 
 suspend fun String.haveDub(referer: String): Boolean {
@@ -905,7 +221,6 @@ suspend fun tmdbToAnimeId(title: String?, year: Int?, season: String?, type: TvT
           ${'$'}search: String
           ${'$'}sort: [MediaSort] = [POPULARITY_DESC, SCORE_DESC]
           ${'$'}type: MediaType
-          ${'$'}season: MediaSeason
           ${'$'}seasonYear: Int
           ${'$'}format: [MediaFormat]
         ) {
@@ -914,7 +229,6 @@ suspend fun tmdbToAnimeId(title: String?, year: Int?, season: String?, type: TvT
               search: ${'$'}search
               sort: ${'$'}sort
               type: ${'$'}type
-              season: ${'$'}season
               seasonYear: ${'$'}seasonYear
               format_in: ${'$'}format
             ) {
@@ -929,7 +243,7 @@ suspend fun tmdbToAnimeId(title: String?, year: Int?, season: String?, type: TvT
         "search" to title,
         "sort" to "SEARCH_MATCH",
         "type" to "ANIME",
-        "season" to season?.uppercase(),
+        //"season" to season?.uppercase(),
         "seasonYear" to year,
         "format" to listOf(if (type == TvType.AnimeMovie) "MOVIE" else "TV", "ONA")
     ).filterValues { value -> value != null && value.toString().isNotEmpty() }
@@ -939,7 +253,6 @@ suspend fun tmdbToAnimeId(title: String?, year: Int?, season: String?, type: TvT
     ).toJson().toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull())
     val res = app.post(anilistAPI, requestBody = data)
         .parsedSafe<AniSearch>()?.data?.Page?.media?.firstOrNull()
-    Log.d("Phisher", res?.idMal.toString())
     return AniIds(res?.id, res?.idMal)
 
 }
@@ -955,57 +268,6 @@ fun generateWpKey(r: String, m: String): String {
 }
 
 
-suspend fun loadCustomTagExtractor(
-    tag: String? = null,
-    url: String,
-    referer: String? = null,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit,
-    quality: Int? = null,
-) {
-    loadExtractor(url, referer, subtitleCallback) { link ->
-        CoroutineScope(Dispatchers.IO).launch {
-            val extractorLink = newExtractorLink(
-                link.source,
-                "${link.name} $tag",
-                link.url,
-            ) {
-                this.quality = when (link.type) {
-                    ExtractorLinkType.M3U8 -> link.quality
-                    else -> quality ?: link.quality
-                }
-                this.type = link.type
-                this.headers = link.headers
-                this.referer = link.referer
-                this.extractorData = link.extractorData
-            }
-            callback.invoke(extractorLink)
-        }
-    }
-}
-
-suspend fun loadNameExtractor(
-    name: String? = null,
-    url: String,
-    referer: String? = null,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit,
-    quality: Int,
-) {
-    callback.invoke(
-        newExtractorLink(
-            name ?: "",
-            name ?: "",
-            url,
-        )
-        {
-            this.referer=referer ?:""
-            this.quality=quality
-            this.type=if (url.contains("m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE!!
-        }
-    )
-}
-
 suspend fun loadSourceNameExtractor(
     source: String,
     url: String,
@@ -1013,16 +275,28 @@ suspend fun loadSourceNameExtractor(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit,
     quality: Int? = null,
+    size: String = ""
 ) {
+    val fixSize = if(size.isNotEmpty()) " $size" else ""
     loadExtractor(url, referer, subtitleCallback) { link ->
         CoroutineScope(Dispatchers.IO).launch {
+            val sourcePart = source.trim().takeIf { it.isNotBlank() }
+            val namePart = link.name.trim()
+            val sizePart = fixSize.trim().takeIf { it.isNotBlank() }
+
+            val label = listOfNotNull(
+                sourcePart,
+                namePart,
+                sizePart
+            ).joinToString(" ")
+
             callback.invoke(
                 newExtractorLink(
-                    "$source[${link.source}]",
-                    "$source[${link.source}]",
+                    source,
+                    label,
                     link.url,
                 ) {
-                    this.quality = link.quality
+                    this.quality = quality ?: link.quality
                     this.type = link.type
                     this.referer = link.referer
                     this.headers = link.headers
@@ -1033,8 +307,10 @@ suspend fun loadSourceNameExtractor(
     }
 }
 
-suspend fun loadCustomExtractor(
-    name: String? = null,
+
+suspend fun loadDisplaySourceNameExtractor(
+    sourceName: String?,
+    displayName: String?,
     url: String,
     referer: String? = null,
     subtitleCallback: (SubtitleFile) -> Unit,
@@ -1045,13 +321,11 @@ suspend fun loadCustomExtractor(
         CoroutineScope(Dispatchers.IO).launch {
             callback.invoke(
                 newExtractorLink(
-                    name ?: link.source,
-                    name ?: link.name,
+                    sourceName ?: "",
+                    displayName ?: "",
                     link.url,
                 ) {
-                    this.quality = when {
-                        else -> quality ?: link.quality
-                    }
+                    this.quality = quality ?: link.quality
                     this.type = link.type
                     this.referer = link.referer
                     this.headers = link.headers
@@ -1075,11 +349,14 @@ fun getEpisodeSlug(
     season: Int? = null,
     episode: Int? = null,
 ): Pair<String, String> {
-    return if (season == null && episode == null) {
+    val result = if (season == null && episode == null) {
         "" to ""
     } else {
-        (if (season!! < 10) "0$season" else "$season") to (if (episode!! < 10) "0$episode" else "$episode")
+        val seasonSlug = if (season!! < 10) "0$season" else "$season"
+        val episodeSlug = if (episode!! < 10) "0$episode" else "$episode"
+        seasonSlug to episodeSlug
     }
+    return result
 }
 
 fun getTitleSlug(title: String? = null): Pair<String?, String?> {
@@ -1157,94 +434,12 @@ fun decodeIndexJson(json: String): String {
     return base64Decode(slug.substring(0, slug.length - 20))
 }
 
-fun String.xorDecrypt(key: String): String {
-    val sb = StringBuilder()
-    var i = 0
-    while (i < this.length) {
-        var j = 0
-        while (j < key.length && i < this.length) {
-            sb.append((this[i].code xor key[j].code).toChar())
-            j++
-            i++
-        }
-    }
-    return sb.toString()
-}
-
-//
-
-fun VidsrcCCEncode(input: String): String {
-    val key = "78B22E5E862BC"
-    val encrypted = rc4(key, input)
-    val base64Encoded = base64Encode(encrypted.encodeToByteArray())
-    return urlEncode(base64Encoded)
-}
-
-private fun rc4(key: String, input: String): String {
-    val s = IntArray(256) { it }
-    val k = IntArray(256)
-
-    for (i in key.indices) {
-        k[i] = key[i].code
-    }
-
-    var j = 0
-    for (i in 0 until 256) {
-        j = (j + s[i] + k[i % key.length]) % 256
-        s[i] = s[j].also { s[j] = s[i] }
-    }
-
-    val result = StringBuilder()
-    var i = 0
-    j = 0
-    for (char in input) {
-        i = (i + 1) % 256
-        j = (j + s[i]) % 256
-        s[i] = s[j].also { s[j] = s[i] }
-        val k = s[(s[i] + s[j]) % 256]
-        result.append((char.code xor k).toChar())
-    }
-    return result.toString()
-}
-
-private fun urlEncode(input: String): String {
-    return URLEncoder.encode(input, Charsets.UTF_8.name())
-}
-
-fun encodeURIComponent(value: String): String {
-    return URLEncoder.encode(value, Charsets.UTF_8.name())
-}
-
-//
-
-fun vidsrctoDecrypt(text: String): String {
-    val parse = base64DecodeArray(text)
-    val cipher = Cipher.getInstance("RC4")
-    cipher.init(
-        Cipher.DECRYPT_MODE,
-        SecretKeySpec("78B22E5E862BC".toByteArray(), "RC4"),
-        cipher.parameters
-    )
-    return decode(cipher.doFinal(parse).toString(Charsets.UTF_8))
-}
-
 fun String?.createSlug(): String? {
     return this?.filter { it.isWhitespace() || it.isLetterOrDigit() }
         ?.trim()
         ?.replace("\\s+".toRegex(), "-")
         ?.lowercase()
 }
-
-fun String?.createPlayerSlug(): String? {
-    return this?.trim()
-        ?.lowercase()
-        ?.replace(
-            "[^a-z0-9\\s-]".toRegex(),
-            ""
-        ) // Remove special characters except spaces & hyphens
-        ?.replace("\\s+".toRegex(), "-") // Replace spaces with hyphens
-}
-
 
 fun bytesToGigaBytes(number: Double): Double = number / 1024000000
 
@@ -1262,12 +457,6 @@ fun String.getFileSize(): Float? {
     }
 }
 
-fun getUhdTags(str: String?): String {
-    return Regex("\\d{3,4}[Pp]\\.?(.*?)\\[").find(str ?: "")?.groupValues?.getOrNull(1)
-        ?.replace(".", " ")?.trim()
-        ?: str ?: ""
-}
-
 fun getIndexQualityTags(str: String?, fullTag: Boolean = false): String {
     return if (fullTag) Regex("(?i)(.*)\\.(?:mkv|mp4|avi)").find(str ?: "")?.groupValues?.get(1)
         ?.trim() ?: str ?: "" else Regex("(?i)\\d{3,4}[pP]\\.?(.*?)\\.(mkv|mp4|avi)").find(
@@ -1277,19 +466,15 @@ fun getIndexQualityTags(str: String?, fullTag: Boolean = false): String {
 }
 
 fun getIndexQuality(str: String?): Int {
-    return Regex("(\\d{3,4})[pP]").find(str ?: "")?.groupValues?.getOrNull(1)?.toIntOrNull()
+    return Regex("""\b(2160|1440|1080|720|576|540|480)\s*[pP]\b""").find(str.orEmpty())?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: Qualities.Unknown.value
-}
-
-fun getIndexSize(str: String?): String? {
-    return Regex("(?i)([\\d.]+\\s*(?:gb|mb))").find(str ?: "")?.groupValues?.getOrNull(1)?.trim()
 }
 
 suspend fun extractMdrive(url: String): List<String> {
     val regex = Regex("hubcloud|gdflix|gdlink", RegexOption.IGNORE_CASE)
 
     return try {
-        app.get(url).document
+        app.get(url).documentLarge
             .select("a[href]")
             .mapNotNull { element ->
                 val href = element.attr("href")
@@ -1315,46 +500,6 @@ fun getQuality(str: String): Int {
         "1080p Ultra" -> Qualities.P1080.value
         else -> getQualityFromName(str)
     }
-}
-
-fun getGMoviesQuality(str: String): Int {
-    return when {
-        str.contains("480P", true) -> Qualities.P480.value
-        str.contains("720P", true) -> Qualities.P720.value
-        str.contains("1080P", true) -> Qualities.P1080.value
-        str.contains("4K", true) -> Qualities.P2160.value
-        else -> Qualities.Unknown.value
-    }
-}
-
-fun getFDoviesQuality(str: String): String {
-    return when {
-        str.contains("1080P", true) -> "1080P"
-        str.contains("4K", true) -> "4K"
-        else -> ""
-    }
-}
-
-fun getVipLanguage(str: String): String {
-    return when (str) {
-        "in_ID" -> "Indonesian"
-        "pt" -> "Portuguese"
-        else -> str.split("_").first().let {
-            SubtitleHelper.fromTwoLettersToLanguage(it).toString()
-        }
-    }
-}
-
-fun fixCrunchyrollLang(language: String?): String? {
-    return SubtitleHelper.fromTwoLettersToLanguage(language ?: return null)
-        ?: SubtitleHelper.fromTwoLettersToLanguage(language.substringBefore("-"))
-}
-
-fun getDeviceId(length: Int = 16): String {
-    val allowedChars = ('a'..'f') + ('0'..'9')
-    return (1..length)
-        .map { allowedChars.random() }
-        .joinToString("")
 }
 
 fun String.encodeUrl(): String {
@@ -1387,19 +532,27 @@ fun isUpcoming(dateString: String?): Boolean {
 
 fun getDate(): TmdbDate {
     val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    val calender = Calendar.getInstance()
-    val today = formatter.format(calender.time)
-    calender.add(Calendar.WEEK_OF_YEAR, 1)
-    val nextWeek = formatter.format(calender.time)
-    return TmdbDate(today, nextWeek)
-}
+    val calendar = Calendar.getInstance()
 
-fun decode(input: String): String = URLDecoder.decode(input, "utf-8")
+    // Today
+    val today = formatter.format(calendar.time)
 
-fun encode(input: String): String = URLEncoder.encode(input, "utf-8").replace("+", "%20")
+    // Next week
+    calendar.add(Calendar.WEEK_OF_YEAR, 1)
+    val nextWeek = formatter.format(calendar.time)
 
-fun base64DecodeAPI(api: String): String {
-    return api.chunked(4).map { base64Decode(it) }.reversed().joinToString("")
+    // Last week's Monday
+    calendar.time = Date()
+    calendar.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+    calendar.add(Calendar.WEEK_OF_YEAR, -1)
+    val lastWeekStart = formatter.format(calendar.time)
+
+    // Start of current month
+    calendar.time = Date()
+    calendar.set(Calendar.DAY_OF_MONTH, 1)
+    val monthStart = formatter.format(calendar.time)
+
+    return TmdbDate(today, nextWeek, lastWeekStart, monthStart)
 }
 
 fun fixUrl(url: String, domain: String): String {
@@ -1444,175 +597,6 @@ private enum class Symbol(val decimalValue: Int) {
                 .firstOrNull { value >= it.decimalValue }
     }
 }
-
-object AniwaveUtils {
-
-    fun vrfEncrypt(input: String): String {
-        val rc4Key = SecretKeySpec("tGn6kIpVXBEUmqjD".toByteArray(), "RC4")
-        val cipher = Cipher.getInstance("RC4")
-        cipher.init(Cipher.DECRYPT_MODE, rc4Key, cipher.parameters)
-
-        var vrf = cipher.doFinal(input.toByteArray())
-        vrf = base64Encode(vrf).encodeToByteArray()
-        vrf = vrfShift(vrf)
-        // vrf = rot13(vrf)
-        vrf = vrf.reversed().toByteArray()
-        vrf = base64Encode(vrf).encodeToByteArray()
-        val stringVrf = vrf.toString(Charsets.UTF_8)
-        return "vrf=${stringVrf.encodeUri()}"
-    }
-
-    fun vrfDecrypt(input: String): String {
-        var vrf = base64DecodeArray(input)
-
-        val rc4Key = SecretKeySpec("LUyDrL4qIxtIxOGs".toByteArray(), "RC4")
-        val cipher = Cipher.getInstance("RC4")
-        cipher.init(Cipher.DECRYPT_MODE, rc4Key, cipher.parameters)
-        vrf = cipher.doFinal(vrf)
-
-        return URLDecoder.decode(vrf.toString(Charsets.UTF_8), "utf-8")
-    }
-
-    private fun rot13(vrf: ByteArray): ByteArray {
-        for (i in vrf.indices) {
-            val byte = vrf[i]
-            if (byte in 'A'.code..'Z'.code) {
-                vrf[i] = ((byte - 'A'.code + 13) % 26 + 'A'.code).toByte()
-            } else if (byte in 'a'.code..'z'.code) {
-                vrf[i] = ((byte - 'a'.code + 13) % 26 + 'a'.code).toByte()
-            }
-        }
-        return vrf
-    }
-
-    private fun vrfShift(vrf: ByteArray): ByteArray {
-        for (i in vrf.indices) {
-            val shift = arrayOf(-2, -4, -5, 6, 2, -3, 3, 6)[i % 8]
-            vrf[i] = vrf[i].plus(shift).toByte()
-        }
-        return vrf
-    }
-}
-
-object DumpUtils {
-
-    private val deviceId = getDeviceId()
-
-    suspend fun queryApi(method: String, url: String, params: Map<String, String>): String {
-        return app.custom(
-            method,
-            url,
-            requestBody = if (method == "POST") params.toJson()
-                .toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull()) else null,
-            params = if (method == "GET") params else emptyMap(),
-            headers = createHeaders(params)
-        ).parsedSafe<HashMap<String, String>>()?.get("data").let {
-            cryptoHandler(
-                it.toString(),
-                deviceId,
-                false
-            )
-        }
-    }
-
-    private fun createHeaders(
-        params: Map<String, String>,
-        currentTime: String = System.currentTimeMillis().toString(),
-    ): Map<String, String> {
-        return mapOf(
-            "lang" to "en",
-            "currentTime" to currentTime,
-            "sign" to getSign(currentTime, params).toString(),
-            "aesKey" to getAesKey().toString(),
-        )
-    }
-
-    private fun cryptoHandler(
-        string: String,
-        secretKeyString: String,
-        encrypt: Boolean = true
-    ): String {
-        val secretKey = SecretKeySpec(secretKeyString.toByteArray(), "AES")
-        val cipher = Cipher.getInstance("AES/ECB/PKCS5PADDING")
-        return if (!encrypt) {
-            cipher.init(Cipher.DECRYPT_MODE, secretKey)
-            String(cipher.doFinal(base64DecodeArray(string)))
-        } else {
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-            base64Encode(cipher.doFinal(string.toByteArray()))
-        }
-    }
-
-    private fun getAesKey(): String? {
-        val publicKey =
-            RSAEncryptionHelper.getPublicKeyFromString(BuildConfig.DUMP_KEY) ?: return null
-        return RSAEncryptionHelper.encryptText(deviceId, publicKey)
-    }
-
-    private fun getSign(currentTime: String, params: Map<String, String>): String? {
-        val chipper = listOf(
-            currentTime,
-            params.map { it.value }.reversed().joinToString("")
-                .let { base64Encode(it.toByteArray()) }).joinToString("")
-        val enc = cryptoHandler(chipper, deviceId)
-        return md5(enc)
-    }
-
-    private fun md5(input: String): String {
-        val md = MessageDigest.getInstance("MD5")
-        return BigInteger(1, md.digest(input.toByteArray())).toString(16).padStart(32, '0')
-    }
-
-}
-
-object RSAEncryptionHelper {
-
-    private const val RSA_ALGORITHM = "RSA"
-    private const val CIPHER_TYPE_FOR_RSA = "RSA/ECB/PKCS1Padding"
-
-    private val keyFactory = KeyFactory.getInstance(RSA_ALGORITHM)
-    private val cipher = Cipher.getInstance(CIPHER_TYPE_FOR_RSA)
-
-    fun getPublicKeyFromString(publicKeyString: String): PublicKey? =
-        try {
-            val keySpec =
-                X509EncodedKeySpec(base64DecodeArray(publicKeyString))
-            keyFactory.generatePublic(keySpec)
-        } catch (exception: Exception) {
-            exception.printStackTrace()
-            null
-        }
-
-    fun getPrivateKeyFromString(privateKeyString: String): PrivateKey? =
-        try {
-            val keySpec =
-                PKCS8EncodedKeySpec(base64DecodeArray(privateKeyString))
-            keyFactory.generatePrivate(keySpec)
-        } catch (exception: Exception) {
-            exception.printStackTrace()
-            null
-        }
-
-    fun encryptText(plainText: String, publicKey: PublicKey): String? =
-        try {
-            cipher.init(Cipher.ENCRYPT_MODE, publicKey)
-            base64Encode(cipher.doFinal(plainText.toByteArray()))
-        } catch (exception: Exception) {
-            exception.printStackTrace()
-            null
-        }
-
-    fun decryptText(encryptedText: String, privateKey: PrivateKey): String? =
-        try {
-            cipher.init(Cipher.DECRYPT_MODE, privateKey)
-            String(cipher.doFinal(base64DecodeArray(encryptedText)))
-        } catch (exception: Exception) {
-            exception.printStackTrace()
-            null
-        }
-}
-
-// code found on https://stackoverflow.com/a/63701411
 
 /**
  * Conforming with CryptoJS AES method
@@ -1735,312 +719,10 @@ object CryptoJS {
     }
 }
 
-object AESGCM {
-    fun ByteArray.decrypt(pass: String): String {
-        val (key, iv) = generateKeyAndIv(pass)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        return String(cipher.doFinal(this), StandardCharsets.UTF_8)
-    }
-
-    private fun generateKeyAndIv(pass: String): Pair<ByteArray, ByteArray> {
-        val datePart = getCurrentUTCDateString().take(16)
-        val hexString = datePart + pass
-        val byteArray = hexString.toByteArray(StandardCharsets.UTF_8)
-        val digest = MessageDigest.getInstance("SHA-256").digest(byteArray)
-        return digest.copyOfRange(0, digest.size / 2) to digest.copyOfRange(
-            digest.size / 2,
-            digest.size
-        )
-    }
-
-    private fun getCurrentUTCDateString(): String {
-        val dateFormat = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.getDefault())
-        dateFormat.timeZone = TimeZone.getTimeZone("GMT")
-        return dateFormat.format(Date())
-    }
-}
-
-suspend fun extractbollytag(url: String): String {
-    val tagdoc = app.get(url).text
-    val tags = """\b\d{3,4}p\b""".toRegex().find(tagdoc)?.value?.trim() ?: ""
-    return tags
-}
-
-suspend fun extractbollytag2(url: String): String {
-    val tagdoc = app.get(url).text
-    val tags = """\b\d{3,4}p\b\s(.*?)\[""".toRegex().find(tagdoc)?.groupValues?.get(1)?.trim() ?: ""
-    return tags
-}
-
-suspend fun extracttopmoviestag(url: String): String? {
-    val tagdoc = app.get(url).text
-    val tags = """\b\d{3,4}p\b""".toRegex().find(tagdoc)?.value?.trim() ?: ""
-    return tags
-}
-
-suspend fun extracttopmoviestag2(url: String): String? {
-    val tagdoc = app.get(url).text
-    val tags = """\b\d{3,4}p\b\s(.*?)\[""".toRegex().find(tagdoc)?.groupValues?.get(1)?.trim() ?: ""
-    return tags
-}
-
-suspend fun decodesmashy(url: String): String {
-    val doc = app.get(url, referer = "https://smashystream.xyz/").document
-    val string =
-        doc.toString().substringAfter("#2").substringBefore("\"").replace(Regex("//.{16}"), "")
-            .let { DecodeBase64(it) }
-    return string
-}
-
-fun DecodeBase64(encodedString: String): String {
-    // Decode the Base64 encoded string into a byte array
-    val decodedBytes = base64DecodeArray(encodedString)
-    // Convert the byte array into a string
-    return String(decodedBytes)
-}
-
-//Catflix
-
-fun CathexToBinary(hex: String): String {
-    val binary = StringBuilder()
-    for (i in hex.indices step 2) {
-        val hexPair = hex.substring(i, i + 2)
-        val charValue = hexPair.toInt(16).toChar()
-        binary.append(charValue)
-    }
-    return binary.toString()
-}
-
-fun CatxorDecrypt(binary: String, key: String): String {
-    val decrypted = StringBuilder()
-    val keyLength = key.length
-
-    for (i in binary.indices) {
-        val decryptedChar = binary[i].code xor key[i % keyLength].code
-        decrypted.append(decryptedChar.toChar())
-    }
-
-    return decrypted.toString()
-}
-
-fun CatdecryptHexWithKey(hex: String, key: String): String {
-    val binary = CathexToBinary(hex)
-    return CatxorDecrypt(binary, key)
-}
-
-fun getfullURL(url: String, mainUrl: String): String {
-    return "$mainUrl$url"
-}
-
-
-fun hashOuter(e: String): String {
-    var t: Long = 0L // Use Long here
-    for (ch in e) {
-        t = (ch.code + (t shl 6) + (t shl 16) - t) and 0xFFFFFFFFL // Use Long type constant
-    }
-    return t.toString(16) // Convert to hexadecimal
-}
-
-fun hashInner(e: String): String {
-    var t = e
-    var n: Long = 0xDEADBEEFL // Use Long for n
-    for (i in t.indices) {
-        var r = t[i].code
-        r = r xor (17 * i and 0xFF)
-        n = (n shl 5 or (n ushr 27)) and 0xFFFFFFFFL // Use Long type constant
-        n = n xor r.toLong()
-        n = (n * 73244475) and 0xFFFFFFFFL // Use Long type constant
-    }
-    n = n xor (n ushr 16)
-    n = (n * 295559667) and 0xFFFFFFFFL // Use Long type constant
-    n = n xor (n ushr 13)
-    n = (n * 877262033) and 0xFFFFFFFFL // Use Long type constant
-    n = n xor (n ushr 16)
-    return n.toString(16).padStart(8, '0') // Return 8-digit hexadecimal string
-}
-
-fun generateRiveSecret(e: String?, c: List<String>): String {
-    if (e.isNullOrEmpty()) return "rive"
-
-    return try {
-        val r = e
-        val hashed = hashInner(hashOuter(r)) // Apply the hash functions
-        val i = hashed.encodeToByteArray().toBase64() // Base64 encode the result of hashed
-
-        var t: String
-        var n: Int
-
-        if (e.toIntOrNull() == null) {  // If the string is not a number
-            val sum = r.sumOf { it.code }
-            t = c.getOrElse(sum % c.size) { r.encodeToByteArray().toBase64() }
-            n = (sum % i.length) / 2
-        } else {
-            val num = e.toInt()
-            t = c.getOrElse(num % c.size) { r.encodeToByteArray().toBase64() }
-            n = (num % i.length) / 2
-        }
-
-        i.take(n) + t + i.drop(n)
-    } catch (err: Exception) {
-        "topSecret"
-    }
-}
-
-// Extension function for Base64 encoding
-fun ByteArray.toBase64(): String {
-    return android.util.Base64.encodeToString(this, android.util.Base64.NO_WRAP)
-}
-
-
-fun decryptBase64BlowfishEbc(base64Encrypted: String, key: String): String {
-    try {
-        val encryptedBytes = base64DecodeArray(base64Encrypted)
-        val secretKeySpec = SecretKeySpec(key.toByteArray(), "Blowfish")
-        val cipher = Cipher.getInstance("Blowfish/ECB/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, secretKeySpec)
-        val decryptedBytes = cipher.doFinal(encryptedBytes)
-        return String(decryptedBytes)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        return "Decryption failed: ${e.message}"
-    }
-}
-
-// Decrypt Links using Blowfish
-fun decryptLinks(data: String): List<String> {
-    val key = data.substring(data.length - 10)
-    val ct = data.substring(0, data.length - 10)
-    val pt = decryptBase64BlowfishEbc(ct, key)
-    return pt.chunked(5)
-}
-
-
-fun loadHindMoviezLinks(
-    data: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-
-    val links = data.split("+")
-    val scope = CoroutineScope(Dispatchers.IO)  // Using IO dispatcher for network calls
-
-    links.forEach { item ->
-        scope.launch {
-            try {
-                val res = app.get(item, timeout = 30, allowRedirects = true)
-                val doc = res.document
-                val size = doc.selectFirst("body > div.container > p:nth-child(3)")?.ownText()
-                Log.d("Phisher HH Size",size.toString())
-                if (res.url.contains("hpage.site")) {
-                    val quality = getVideoQuality(doc.select(".container h2").text())
-                    val linkElements = doc.select(".container a")
-                    linkElements.forEach { linkItem ->
-                        callback.invoke(
-                            newExtractorLink(
-                                "HindMoviez [H-Cloud] [$size]",
-                                "HindMoviez [H-Cloud] [$size]",
-                                url = linkItem.attr("href")
-                            ) {
-                                this.quality = quality
-                            }
-                        )
-                    }
-                } else if (res.url.contains("hindshare.site")) {
-                    val quality = getVideoQuality(doc.select(".container p:nth-of-type(1) strong").text())
-                    val linkElements = doc.select(".btn-group a")
-                    linkElements.forEach { linkItem ->
-                        if (linkItem.text().contains("HCloud")) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    "HindMoviez [H-Cloud] [$size]",
-                                    "HindMoviez [H-Cloud] [$size]",
-                                    url = linkItem.attr("href")
-                                ) {
-                                    this.quality = quality
-                                }
-                            )
-                        } else if (linkItem.attr("href").contains("hindcdn.site")) {
-                            val doc = app.get(linkItem.attr("href"), timeout = 30, allowRedirects = true).document
-                            val linkElements = doc.select(".container a")
-                            linkElements.forEach { item ->
-                                val host = if (item.text().lowercase().contains("google")) {
-                                    item.text()
-                                } else {
-                                    "HindCdn H-Cloud"
-                                }
-                                callback.invoke(
-                                    newExtractorLink(
-                                        "HindMoviez [$host] [$size]",
-                                        "HindMoviez [$host] [$size]",
-                                        url = item.attr("href")
-                                    ) {
-                                        this.quality = quality
-                                    }
-                                )
-                            }
-                        } else if (linkItem.attr("href").contains("gdirect.cloud")) {
-                            val doc = app.get(
-                                linkItem.attr("href"),
-                                timeout = 30,
-                                allowRedirects = true,
-                                referer = "https://hindshare.site/"
-                            ).document
-                            val link = doc.select("a")
-                            callback.invoke(
-                                newExtractorLink(
-                                    "HindMoviez [GDirect] [$size]",
-                                    "HindMoviez [GDirect] [$size]",
-                                    url = link.attr("href")
-                                ) {
-                                    this.quality = quality
-                                }
-                            )
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    return true
-}
-
 
 private fun getVideoQuality(string: String?): Int {
     return Regex("(\\d{3,4})[pP]").find(string ?: "")?.groupValues?.getOrNull(1)?.toIntOrNull()
         ?: Qualities.Unknown.value
-}
-
-object Deobfuscator {
-    suspend fun deobfuscateScript(source: String): String? {
-        val originalScript =
-            app.get("https://raw.githubusercontent.com/Kohi-den/extensions-source/9328d12fcfca686becfb3068e9d0be95552c536f/lib/synchrony/src/main/assets/synchrony-v2.4.5.1.js").text
-        // Sadly needed until QuickJS properly supports module imports:
-        // Regex for finding one and two in "export{one as Deobfuscator,two as Transformer};"
-        val regex = """export\{(.*) as Deobfuscator,(.*) as Transformer\};""".toRegex()
-        val synchronyScript = regex.find(originalScript)?.let { match ->
-            val (deob, trans) = match.destructured
-            val replacement = "const Deobfuscator = $deob, Transformer = $trans;"
-            originalScript.replace(match.value, replacement)
-        } ?: return null
-
-        return QuickJs.create().use { engine ->
-            engine.evaluate("globalThis.console = { log: () => {}, warn: () => {}, error: () => {}, trace: () => {} };")
-            engine.evaluate(synchronyScript)
-
-            engine.set("source", TestInterface::class.java, object : TestInterface {
-                override fun getValue() = source
-            })
-            engine.evaluate("new Deobfuscator().deobfuscateSource(source.getValue())") as? String
-        }
-    }
-
-    @Suppress("unused")
-    private interface TestInterface {
-        fun getValue(): String
-    }
 }
 
 
@@ -2135,14 +817,15 @@ suspend fun invokeExternalSource(
                 if (!(source.label == "AUTO" || format == ExtractorLinkType.VIDEO)) return@org
 
                 callback.invoke(
-                    ExtractorLink(
-                        "⌜ SuperStream ⌟ ${source.size}",
+                    newExtractorLink(
+                        "⌜ SuperStream ⌟",
                         "⌜ SuperStream ⌟ [Server ${index + 1}] ${source.size}",
                         source.file?.replace("\\/", "/") ?: return@org,
-                        "",
-                        getIndexQuality(if (format == ExtractorLinkType.M3U8) fileList.fileName else source.label),
-                        type = format,
+                        format
                     )
+                    {
+                        this.quality = getIndexQuality(if (format == ExtractorLinkType.M3U8) fileList.fileName else source.label)
+                    }
                 )
             }
         }
@@ -2151,9 +834,7 @@ suspend fun invokeExternalSource(
 
 fun parseJsonToEpisodes(json: String): List<EpisoderesponseKAA> {
     val gson = Gson()
-
     data class Response(val result: List<EpisoderesponseKAA>)
-
     val response = gson.fromJson(json, Response::class.java)
     return response.result
 }
@@ -2455,84 +1136,84 @@ object CryptoAES {
 }
 
 
-val languageMap = mapOf(
-    "Afrikaans" to Pair("af", "afr"),
-    "Albanian" to Pair("sq", "sqi"),
-    "Amharic" to Pair("am", "amh"),
-    "Arabic" to Pair("ar", "ara"),
-    "Armenian" to Pair("hy", "hye"),
-    "Azerbaijani" to Pair("az", "aze"),
-    "Basque" to Pair("eu", "eus"),
-    "Belarusian" to Pair("be", "bel"),
-    "Bengali" to Pair("bn", "ben"),
-    "Bosnian" to Pair("bs", "bos"),
-    "Bulgarian" to Pair("bg", "bul"),
-    "Catalan" to Pair("ca", "cat"),
-    "Chinese" to Pair("zh", "zho"),
-    "Croatian" to Pair("hr", "hrv"),
-    "Czech" to Pair("cs", "ces"),
-    "Danish" to Pair("da", "dan"),
-    "Dutch" to Pair("nl", "nld"),
-    "English" to Pair("en", "eng"),
-    "Estonian" to Pair("et", "est"),
-    "Filipino" to Pair("tl", "tgl"),
-    "Finnish" to Pair("fi", "fin"),
-    "French" to Pair("fr", "fra"),
-    "Galician" to Pair("gl", "glg"),
-    "Georgian" to Pair("ka", "kat"),
-    "German" to Pair("de", "deu"),
-    "Greek" to Pair("el", "ell"),
-    "Gujarati" to Pair("gu", "guj"),
-    "Hebrew" to Pair("he", "heb"),
-    "Hindi" to Pair("hi", "hin"),
-    "Hungarian" to Pair("hu", "hun"),
-    "Icelandic" to Pair("is", "isl"),
-    "Indonesian" to Pair("id", "ind"),
-    "Italian" to Pair("it", "ita"),
-    "Japanese" to Pair("ja", "jpn"),
-    "Kannada" to Pair("kn", "kan"),
-    "Kazakh" to Pair("kk", "kaz"),
-    "Korean" to Pair("ko", "kor"),
-    "Latvian" to Pair("lv", "lav"),
-    "Lithuanian" to Pair("lt", "lit"),
-    "Macedonian" to Pair("mk", "mkd"),
-    "Malay" to Pair("ms", "msa"),
-    "Malayalam" to Pair("ml", "mal"),
-    "Maltese" to Pair("mt", "mlt"),
-    "Marathi" to Pair("mr", "mar"),
-    "Mongolian" to Pair("mn", "mon"),
-    "Nepali" to Pair("ne", "nep"),
-    "Norwegian" to Pair("no", "nor"),
-    "Persian" to Pair("fa", "fas"),
-    "Polish" to Pair("pl", "pol"),
-    "Portuguese" to Pair("pt", "por"),
-    "Punjabi" to Pair("pa", "pan"),
-    "Romanian" to Pair("ro", "ron"),
-    "Russian" to Pair("ru", "rus"),
-    "Serbian" to Pair("sr", "srp"),
-    "Sinhala" to Pair("si", "sin"),
-    "Slovak" to Pair("sk", "slk"),
-    "Slovenian" to Pair("sl", "slv"),
-    "Spanish" to Pair("es", "spa"),
-    "Swahili" to Pair("sw", "swa"),
-    "Swedish" to Pair("sv", "swe"),
-    "Tamil" to Pair("ta", "tam"),
-    "Telugu" to Pair("te", "tel"),
-    "Thai" to Pair("th", "tha"),
-    "Turkish" to Pair("tr", "tur"),
-    "Ukrainian" to Pair("uk", "ukr"),
-    "Urdu" to Pair("ur", "urd"),
-    "Uzbek" to Pair("uz", "uzb"),
-    "Vietnamese" to Pair("vi", "vie"),
-    "Welsh" to Pair("cy", "cym"),
-    "Yiddish" to Pair("yi", "yid")
+val languageMap: Map<String, Set<String>> = mapOf(
+    "Afrikaans"   to setOf("af", "afr"),
+    "Albanian"    to setOf("sq", "sqi", "alb"),
+    "Amharic"     to setOf("am", "amh"),
+    "Arabic"      to setOf("ar", "ara"),
+    "Armenian"    to setOf("hy", "hye", "arm"),
+    "Azerbaijani" to setOf("az", "aze"),
+    "Basque"      to setOf("eu", "eus", "baq"),
+    "Belarusian"  to setOf("be", "bel"),
+    "Bengali"     to setOf("bn", "ben"),
+    "Bosnian"     to setOf("bs", "bos"),
+    "Bulgarian"   to setOf("bg", "bul"),
+    "Catalan"     to setOf("ca", "cat"),
+    "Chinese"     to setOf("zh", "zho", "chi"),
+    "Croatian"    to setOf("hr", "hrv", "scr"),
+    "Czech"       to setOf("cs", "ces", "cze"),
+    "Danish"      to setOf("da", "dan"),
+    "Dutch"       to setOf("nl", "nld", "dut"),
+    "English"     to setOf("en", "eng"),
+    "Estonian"    to setOf("et", "est"),
+    "Filipino"    to setOf("tl", "tgl"),
+    "Finnish"     to setOf("fi", "fin"),
+    "French"      to setOf("fr", "fra", "fre"),
+    "Galician"    to setOf("gl", "glg"),
+    "Georgian"    to setOf("ka", "kat", "geo"),
+    "German"      to setOf("de", "deu", "ger"),
+    "Greek"       to setOf("el", "ell", "gre"),
+    "Gujarati"    to setOf("gu", "guj"),
+    "Hebrew"      to setOf("he", "heb"),
+    "Hindi"       to setOf("hi", "hin"),
+    "Hungarian"   to setOf("hu", "hun"),
+    "Icelandic"   to setOf("is", "isl", "ice"),
+    "Indonesian"  to setOf("id", "ind"),
+    "Italian"     to setOf("it", "ita"),
+    "Japanese"    to setOf("ja", "jpn"),
+    "Kannada"     to setOf("kn", "kan"),
+    "Kazakh"      to setOf("kk", "kaz"),
+    "Korean"      to setOf("ko", "kor"),
+    "Latvian"     to setOf("lv", "lav"),
+    "Lithuanian"  to setOf("lt", "lit"),
+    "Macedonian"  to setOf("mk", "mkd", "mac"),
+    "Malay"       to setOf("ms", "msa", "may"),
+    "Malayalam"   to setOf("ml", "mal"),
+    "Maltese"     to setOf("mt", "mlt"),
+    "Marathi"     to setOf("mr", "mar"),
+    "Mongolian"   to setOf("mn", "mon"),
+    "Nepali"      to setOf("ne", "nep"),
+    "Norwegian"   to setOf("no", "nor"),
+    "Persian"     to setOf("fa", "fas", "per"),
+    "Polish"      to setOf("pl", "pol"),
+    "Portuguese"  to setOf("pt", "por"),
+    "Punjabi"     to setOf("pa", "pan"),
+    "Romanian"    to setOf("ro", "ron", "rum"),
+    "Russian"     to setOf("ru", "rus"),
+    "Serbian"     to setOf("sr", "srp", "scc"),
+    "Sinhala"     to setOf("si", "sin"),
+    "Slovak"      to setOf("sk", "slk", "slo"),
+    "Slovenian"   to setOf("sl", "slv"),
+    "Spanish"     to setOf("es", "spa"),
+    "Swahili"     to setOf("sw", "swa"),
+    "Swedish"     to setOf("sv", "swe"),
+    "Tamil"       to setOf("ta", "tam"),
+    "Telugu"      to setOf("te", "tel"),
+    "Thai"        to setOf("th", "tha"),
+    "Turkish"     to setOf("tr", "tur"),
+    "Ukrainian"   to setOf("uk", "ukr"),
+    "Urdu"        to setOf("ur", "urd"),
+    "Uzbek"       to setOf("uz", "uzb"),
+    "Vietnamese"  to setOf("vi", "vie"),
+    "Welsh"       to setOf("cy", "cym", "wel"),
+    "Yiddish"     to setOf("yi", "yid")
 )
 
-fun getLanguage(language: String?): String? {
-    language ?: return null
-    val normalizedLang = language.substringBefore("-")
-    return languageMap.entries.find { it.value.first == normalizedLang || it.value.second == normalizedLang }?.key
+fun getLanguage(code: String): String {
+    val lower = code.lowercase()
+    return languageMap.entries.firstOrNull { lower in it.value }?.key ?: "UnKnown"
 }
+
 
 suspend fun getPlayer4uUrl(
     name: String,
@@ -2543,8 +1224,7 @@ suspend fun getPlayer4uUrl(
 ) {
     val response = app.get(url, referer = referer)
     var script = getAndUnpack(response.text).takeIf { it.isNotEmpty() }
-        ?: response.document.selectFirst("script:containsData(sources:)")?.data()
-    Log.d("Phisher",script.toString())
+        ?: response.documentLarge.selectFirst("script:containsData(sources:)")?.data()
     if (script == null) {
         val iframeUrl =
             Regex("""<iframe src="(.*?)"""").find(response.text)?.groupValues?.getOrNull(1)
@@ -2601,127 +1281,20 @@ fun getAnidbEid(jsonString: String, episodeNumber: Int?): Int? {
     }
 }
 
-
-fun getImdbId(jsonString: String): String? {
-    val jsonObject = JSONObject(jsonString)
-    return jsonObject.optJSONObject("mappings")?.optString("imdb_id", "")
-}
-
-
-fun generateVidsrcVrf(n: Int?): String {
-    val secret = "j8MDyaub7B"
-    val sha256 = MessageDigest.getInstance("SHA-256").digest(secret.toByteArray())
-    val key: SecretKey = SecretKeySpec(sha256, "AES")
-    val iv = ByteArray(16).apply { SecureRandom().nextBytes(this) }
-    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding").apply {
-        init(Cipher.ENCRYPT_MODE, key, IvParameterSpec(iv))
-    }
-    val inputBytes = (n?.toString() ?: "").toByteArray()
-    val encrypted = cipher.doFinal(inputBytes)
-
-    val ivHex = iv.joinToString("") { "%02x".format(it) }
-    val encryptedHex = encrypted.joinToString("") { "%02x".format(it) }
-    return "$ivHex:$encryptedHex"
-}
-
-
-internal class AnimekaiDecoder {
-    @SuppressLint("NewApi")
-    fun generateToken(input: String, kaiKeysSrc: List<List<String>>): String {
-        val homeKeyBin = mutableListOf<MutableList<ByteArray>>()
-        for (i in kaiKeysSrc.indices) {
-            val innerList = mutableListOf<ByteArray>()
-            for (j in kaiKeysSrc[i].indices) {
-                innerList.add(Base64.getDecoder().decode(kaiKeysSrc[i][j]))
-            }
-            homeKeyBin.add(innerList)
-        }
-
-        // Apply homeEncode logic
-        var n = URLEncoder.encode(input, "UTF-8")
-        val keyLen = homeKeyBin[0].size
-
-        for (j in 0 until keyLen) {
-            val o = mutableListOf<Byte>()
-            for (i in n.indices) {
-                val c = (n[i].code and 0xFF)
-                val k = homeKeyBin[c][j]
-                o.add(k[i % k.size])
-            }
-            n = Base64.getEncoder().encodeToString(o.toByteArray())
-        }
-
-        return n.replace("/", "_").replace("+", "-").replace("=", "")
-    }
-
-    @RequiresApi(Build.VERSION_CODES.O)
-
-    fun decodeIframeData(input: String, homeKeys: List<List<String>>): String {
-        // Step 1: Convert base64-encoded string matrix into ByteArray matrix
-        val key = mutableListOf<MutableList<ByteArray>>()
-        for (i in homeKeys.indices) {
-            val innerList = mutableListOf<ByteArray>()
-            for (j in homeKeys[i].indices) {
-                innerList.add(Base64.getDecoder().decode(homeKeys[i][j]))
-            }
-            key.add(innerList)
-        }
-
-        // Step 2: Decode encoded input back to standard base64 format
-        var n = input.replace('_', '/').replace('-', '+')
-
-        val keyLen = key[0].size
-
-        // Step 3: Run reverse transformation for each round
-        for (j in (keyLen - 1) downTo 0) {
-            val decoded = Base64.getDecoder().decode(n)
-            val o = ByteArray(decoded.size)
-
-            for (i in decoded.indices) {
-                val byte = decoded[i]
-                for (k in key.indices) {
-                    val expectedByte = key[k][j][i % key[k][j].size]
-                    if (expectedByte == byte) {
-                        o[i] = k.toByte()
-                        break
-                    }
-                }
-            }
-
-            n = String(o, Charsets.ISO_8859_1)
-        }
-        return URLDecoder.decode(n, "UTF-8")
-    }
-
-    //Megaup
-
-    @RequiresApi(Build.VERSION_CODES.O)
-    fun decode(n: String, megaKeysSrc: List<List<String>>): String {
-        // Step 1: convert List<List<String>> to MutableList<MutableList<ByteArray>>
-        val megaKeyBin = mutableListOf<MutableList<ByteArray>>()
-        for (innerList in megaKeysSrc) {
-            val decodedInner = mutableListOf<ByteArray>()
-            for (item in innerList) {
-                decodedInner.add(Base64.getDecoder().decode(item))
-            }
-            megaKeyBin.add(decodedInner)
-        }
-
-        // Step 2: do the megaDecode logic with megaKeyBin
-        var decodedString = n.replace('_', '/').replace('-', '+')
-        val keyLen = megaKeyBin[0].size
-        for (j in 1 until keyLen) {
-            val o = Base64.getDecoder().decode(decodedString)
-            for (i in o.indices) {
-                val np = (o[i].toInt() and 0xFF)
-                val ky = megaKeyBin[np][j]
-                o[i] = ky[i % ky.size]
-            }
-            decodedString = String(o, Charsets.ISO_8859_1)
-        }
-
-        return URLDecoder.decode(decodedString)
-    }
+@RequiresApi(Build.VERSION_CODES.O)
+fun generateVrfAES(movieId: String, userId: String): String {
+    // Step 1: Derive key = SHA-256("hack_" + userId)
+    val driveKey = base64Decode("emgmNzJjaU8zOXRnSDU=")
+    val keyData = "${driveKey}_$userId".toByteArray(Charsets.UTF_8)
+    val keyBytes = MessageDigest.getInstance("SHA-256").digest(keyData)
+    val keySpec = SecretKeySpec(keyBytes, "AES")
+    val ivSpec = IvParameterSpec(ByteArray(16))
+    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+    cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec)
+    val encrypted = cipher.doFinal(movieId.toByteArray(Charsets.UTF_8))
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(encrypted)
 }
 
 
@@ -2818,75 +1391,91 @@ val decryptMethods: Map<String, (String) -> String> = mapOf(
     }
 )
 
-fun parseAnimeData(jsonString: String): AnimeData {
-    val objectMapper = ObjectMapper()
-    return objectMapper.readValue(jsonString, AnimeData::class.java)
-}
-
-class UserAgentInterceptor : Interceptor {
-    override fun intercept(chain: Interceptor.Chain): Response {
-        val originalRequest = chain.request()
-        val newRequest = originalRequest.newBuilder()
-            .removeHeader("User-Agent") // Remove existing User-Agent headers
-            .addHeader("User-Agent", "Go-http-client/2.0") // Add new User-Agent
-            .build()
-        return chain.proceed(newRequest)
+fun parseAnimeData(jsonString: String): MetaAnimeData? {
+    return try {
+        val objectMapper = ObjectMapper()
+        objectMapper.readValue(jsonString, MetaAnimeData::class.java)
+    } catch (_: Exception) {
+        null // Return null for invalid JSON instead of crashing
     }
 }
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class MetaMappings(
+    @JsonProperty("themoviedb_id") val themoviedbId: String? = null,
+    @JsonProperty("thetvdb_id") val thetvdbId: Int? = null,
+    @JsonProperty("imdb_id") val imdbId: String? = null,
+    @JsonProperty("mal_id") val malId: Int? = null,
+    @JsonProperty("anilist_id") val anilistId: Int? = null,
+    @JsonProperty("kitsu_id") val kitsuid: String? = null,
+)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ImageData(
+    @JsonProperty("coverType") val coverType: String?,
+    @JsonProperty("url") val url: String?
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class MetaEpisode(
+    @JsonProperty("episode") val episode: String?,
+    @JsonProperty("airdate") val airdate: String?,
+    @JsonProperty("airDateUtc") val airDateUtc: String?,
+    @JsonProperty("length") val length: Int?,
+    @JsonProperty("runtime") val runtime: Int?,
+    @JsonProperty("image") val image: String?,
+    @JsonProperty("title") val title: Map<String, String>?,
+    @JsonProperty("overview") val overview: String?,
+    @JsonProperty("rating") val rating: String?,
+    @JsonProperty("finaleType") val finaleType: String?
+)
+
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class MetaAnimeData(
+    @JsonProperty("titles") val titles: Map<String, String>? = null,
+    @JsonProperty("images") val images: List<ImageData>? = null,
+    @JsonProperty("episodes") val episodes: Map<String, MetaEpisode>? = null,
+    @JsonProperty("mappings") val mappings: MetaMappings? = null
+)
 
 fun cleanTitle(title: String): String {
-    val parts = title.split(".", "-", "_")
 
-    val qualityTags = listOf(
-        "WEBRip", "WEB-DL", "WEB", "BluRay", "HDRip", "DVDRip", "HDTV",
-        "CAM", "TS", "R5", "DVDScr", "BRRip", "BDRip", "DVD", "PDTV",
-        "HD"
+    val name = title.replace(Regex("\\.[a-zA-Z0-9]{2,4}$"), "")
+
+    val patterns = listOf(
+        Regex("(WEB[-_. ]?DL|WEB[-_. ]?RIP|BLURAY|HDRIP|BDRIP|BRRIP|DVDRIP|HDTV|CAM|TS)", RegexOption.IGNORE_CASE),
+        Regex("(H[ .]?264|H[ .]?265|X264|X265|HEVC|AVC)", RegexOption.IGNORE_CASE),
+        Regex("(DDP[ .]?[0-9]\\.[0-9]|DD[ .]?[0-9]\\.[0-9]|AAC[ .]?[0-9]\\.[0-9]|AC3|DTS|EAC3|FLAC|MP3)", RegexOption.IGNORE_CASE),
+        Regex("(ATMOS|DUAL)", RegexOption.IGNORE_CASE),
+        Regex("(HDR10\\+?|HDR|DV|DOLBY[ .]?VISION)", RegexOption.IGNORE_CASE),
+        Regex("\\b(NF|AMZN|DSNP|HULU|CRAV|ATVP)\\b", RegexOption.IGNORE_CASE)
     )
 
-    val audioTags = listOf(
-        "AAC", "AC3", "DTS", "MP3", "FLAC", "DD5", "EAC3", "Atmos"
-    )
+    val results = linkedSetOf<String>()
 
-    val subTags = listOf(
-        "ESub", "ESubs", "Subs", "MultiSub", "NoSub", "EnglishSub", "HindiSub"
-    )
-
-    val codecTags = listOf(
-        "x264", "x265", "H264", "HEVC", "AVC"
-    )
-
-    val startIndex = parts.indexOfFirst { part ->
-        qualityTags.any { tag -> part.contains(tag, ignoreCase = true) }
+    for (pattern in patterns) {
+        pattern.findAll(name).forEach { match ->
+            var value = match.value.uppercase()
+            value = value
+                .replace(Regex("WEB[-_. ]?DL"), "WEB-DL")
+                .replace(Regex("WEB[-_. ]?RIP"), "WEBRIP")
+                .replace(Regex("H[ .]?265"), "H265")
+                .replace(Regex("H[ .]?264"), "H264")
+                .replace(Regex("DOLBY[ .]?VISION"), "DOLBYVISION")
+                .replace("2160P", "4K")
+            results.add(value)
+        }
     }
-
-    val endIndex = parts.indexOfLast { part ->
-        subTags.any { tag -> part.contains(tag, ignoreCase = true) } ||
-                audioTags.any { tag -> part.contains(tag, ignoreCase = true) } ||
-                codecTags.any { tag -> part.contains(tag, ignoreCase = true) }
-    }
-
-    return if (startIndex != -1 && endIndex != -1 && endIndex >= startIndex) {
-        parts.subList(startIndex, endIndex + 1).joinToString(".")
-    } else if (startIndex != -1) {
-        parts.subList(startIndex, parts.size).joinToString(".")
-    } else {
-        parts.takeLast(3).joinToString(".")
-    }
+    return results.joinToString(" ")
 }
+
+
 
 //Anichi
 
 fun String.fixUrlPath(): String {
-    return if (this.contains(".json?")) "https://allanime.day" + this
+    return if (this.contains(".json?")) "https://allanime.day$this"
     else "https://allanime.day" + URI(this).path + ".json?" + URI(this).query
-}
-
-fun fixSourceUrls(url: String, source: String?): String? {
-    return if (source == "Ak" || url.contains("/player/vitemb")) {
-        tryParseJson<AkIframe>(base64Decode(url.substringAfter("=")))?.idUrl
-    } else {
-        url.replace(" ", "%20")
-    }
 }
 
 
@@ -2933,51 +1522,866 @@ suspend fun <T> retryIO(
     return block() // last attempt, let it throw
 }
 
+suspend fun elevenMoviesToken(rawData: String): String {
+    // AES setup
+    val jsonUrl = "https://raw.githubusercontent.com/phisher98/TVVVV/main/output.json"
+    val jsonString = app.get(jsonUrl).text
+    val gson = Gson()
+    val json: Elevenmoviesjson = gson.fromJson(jsonString, Elevenmoviesjson::class.java)
+    val keyHex = json.key_hex
+    val ivHex = json.iv_hex
+    val aesKey = SecretKeySpec(keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), "AES")
+    val aesIv = IvParameterSpec(ivHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
 
-@SuppressLint("NewApi")
-fun elevenMoviesTokenV2(rawData: String): String {
-    // AES key and IV in hex (from Python)
-    val keyHex = "a10e5798728e186d71dbb25c85b70006595c43ebc56077caee5c46fdaec034f9"
-    val ivHex = "82562b2cf22038d3daa1770234c63a04"
-
-    val aesKey = keyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-    val aesIv = ivHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-
+    // AES encrypt
     val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-    val secretKey = SecretKeySpec(aesKey, "AES")
-    val ivSpec = IvParameterSpec(aesIv)
-    cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec)
+    cipher.init(Cipher.ENCRYPT_MODE, aesKey, aesIv)
+    val aesEncrypted = cipher.doFinal(rawData.toByteArray())
+    val aesHex = aesEncrypted.joinToString("") { "%02x".format(it) }
 
-    val paddedInput = rawData.toByteArray(Charsets.UTF_8)
-    val encrypted = cipher.doFinal(paddedInput)
-    val hexString = encrypted.joinToString("") { "%02x".format(it) }
-
-    // XOR key from hex string
-    val xorKeyHex = "c679ea0d"
+    // XOR operation
+    val xorKeyHex = json.xor_key
     val xorKey = xorKeyHex.chunked(2)
         .map { it.toInt(16).toByte() }
         .toByteArray()
 
-    val xorResult = buildString {
-        for (i in hexString.indices) {
-            val c = hexString[i].code
-            val k = xorKey[i % xorKey.size].toInt() and 0xFF
-            append((c xor k).toChar())
-        }
-    }
+    val xorResult = aesHex.mapIndexed { index, char ->
+        ((char.code.toByte() xor xorKey[index % xorKey.size]).toInt()).toChar()
+    }.joinToString("")
 
-    val src = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
-    val dst = "2xwYJGjOibPtCBu3lUNzL_HrQTVK0gFymven4RShWA6f71IcXs-MZ5EaoqkD8pd9"
-    val translationMap = src.zip(dst).toMap()
 
-    val base64Encoded = Base64.getEncoder()
-        .encodeToString(xorResult.toByteArray(Charsets.UTF_8))
+    val src = json.src
+    val dst = json.dst
+
+    val b64 = base64Encode(xorResult.toByteArray())
         .replace("+", "-")
         .replace("/", "_")
         .replace("=", "")
 
-    // Apply custom translation
-    val finalEncoded = base64Encoded.map { translationMap[it] ?: it }.joinToString("")
-    return finalEncoded
+    return b64.map { char ->
+        val index = src.indexOf(char)
+        if (index != -1) dst[index] else char
+    }.joinToString("")
+}
+
+
+suspend fun getRedirectLinks(url: String): String {
+    val doc = app.get(url).toString()
+    val regex = "s\\('o','([A-Za-z0-9+/=]+)'|ck\\('_wp_http_\\d+','([^']+)'".toRegex()
+    val combinedString = buildString {
+        regex.findAll(doc).forEach { matchResult ->
+            val extractedValue = matchResult.groups[1]?.value ?: matchResult.groups[2]?.value
+            if (!extractedValue.isNullOrEmpty()) append(extractedValue)
+        }
+    }
+    return try {
+        val decodedString = base64Decode(hdhubpen(base64Decode(base64Decode(combinedString))))
+        val jsonObject = JSONObject(decodedString)
+        val encodedurl = base64Decode(jsonObject.optString("o", "")).trim()
+        val data = hdhubencode(jsonObject.optString("data", "")).trim()
+        val wphttp1 = jsonObject.optString("blog_url", "").trim()
+        val directlink = runCatching {
+            app.get("$wphttp1?re=$data".trim()).documentLarge.select("body").text().trim()
+        }.getOrDefault("").trim()
+
+        encodedurl.ifEmpty { directlink }
+    } catch (e: Exception) {
+        Log.e("Error:", "Error processing links $e")
+        "" // Return an empty string on failure
+    }
+}
+
+
+fun hdhubencode(encoded: String): String {
+    return String(android.util.Base64.decode(encoded, android.util.Base64.DEFAULT))
+}
+
+
+fun hdhubpen(value: String): String {
+    return value.map {
+        when (it) {
+            in 'A'..'Z' -> ((it - 'A' + 13) % 26 + 'A'.code).toChar()
+            in 'a'..'z' -> ((it - 'a' + 13) % 26 + 'a'.code).toChar()
+            else -> it
+        }
+    }.joinToString("")
+}
+
+suspend fun dispatchToExtractor(
+    link: String,
+    source: String,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+) {
+    when {
+        link.contains("hubdrive", ignoreCase = true) -> Hubdrive().getUrl(link, source, subtitleCallback, callback)
+        link.contains("hubcloud", ignoreCase = true) -> HubCloud().getUrl(link, source, subtitleCallback, callback)
+        link.contains("hubcdn", ignoreCase = true) -> HUBCDN().getUrl(link, source, subtitleCallback, callback)
+        else -> loadSourceNameExtractor(source, link, "", subtitleCallback, callback)
+    }
+}
+
+
+fun customBase64EncodeVidfast(input: ByteArray): String {
+    val sourceChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    val targetChars = "7EkRi2WnMSlgLbXm_jy1vtO69ehrAV0-saUB5FGpoq3QuNIZ8wJ4PfdHxzTDKYCc"
+
+    // Standard Base64 URL-safe encode, no padding or wrap
+    val base64 = android.util.Base64.encodeToString(
+        input,
+        android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+    )
+
+    // Translate characters to custom charset
+    val translationMap = sourceChars.zip(targetChars).toMap()
+    return base64.map { translationMap[it] ?: it }.joinToString("")
+}
+
+private fun md5(input: ByteArray): String {
+    return MessageDigest.getInstance("MD5").digest(input)
+        .joinToString("") { "%02x".format(it) }
+}
+
+private fun reverseString(input: String): String = input.reversed()
+
+fun generateXClientToken(hardcodedTimestamp: Long? = null): String {
+    val timestamp = (hardcodedTimestamp ?: System.currentTimeMillis()).toString()
+    val reversed = reverseString(timestamp)
+    val hash = md5(reversed.toByteArray())
+    return "$timestamp,$hash"
+}
+
+fun generateXTrSignature(
+    method: String,
+    accept: String? = "application/json",
+    contentType: String? = "application/json",
+    url: String,
+    body: String? = null,
+    useAltKey: Boolean = false,
+    hardcodedTimestamp: Long? = null
+): String {
+    val timestamp = hardcodedTimestamp ?: System.currentTimeMillis()
+
+    val canonical = buildCanonicalString(
+        method = method,
+        accept = accept,
+        contentType = contentType,
+        url = url,
+        body = body,
+        timestamp = timestamp
+    )
+    val secretKey = if (useAltKey) {
+        BuildConfig.MOVIEBOX_SECRET_KEY_ALT
+    } else {
+        BuildConfig.MOVIEBOX_SECRET_KEY_DEFAULT
+    }
+    val secretBytes = android.util.Base64.decode(secretKey, android.util.Base64.DEFAULT)
+    val mac = Mac.getInstance("HmacMD5").apply {
+        init(SecretKeySpec(secretBytes, "HmacMD5"))
+    }
+    val rawSignature = mac.doFinal(canonical.toByteArray(Charsets.UTF_8))
+    val signatureBase64 = android.util.Base64.encodeToString(rawSignature, android.util.Base64.NO_WRAP)
+    return "$timestamp|2|$signatureBase64"
+}
+
+
+private fun buildCanonicalString(
+    method: String,
+    accept: String?,
+    contentType: String?,
+    url: String,
+    body: String?,
+    timestamp: Long
+): String {
+    val parsed = Uri.parse(url)
+    val path = parsed.path ?: ""
+
+    // Build query string with sorted parameters (if any)
+    val query = if (parsed.queryParameterNames.isNotEmpty()) {
+        parsed.queryParameterNames.sorted().joinToString("&") { key ->
+            parsed.getQueryParameters(key).joinToString("&") { value ->
+                "$key=$value"  // Don't URL encode here - Python doesn't do it
+            }
+        }
+    } else ""
+
+    val canonicalUrl = if (query.isNotEmpty()) "$path?$query" else path
+
+    val bodyBytes = body?.toByteArray(Charsets.UTF_8)
+    val bodyHash = if (bodyBytes != null) {
+        val trimmed = if (bodyBytes.size > 102400) bodyBytes.copyOfRange(0, 102400) else bodyBytes
+        md5(trimmed)
+    } else ""
+
+    val bodyLength = bodyBytes?.size?.toString() ?: ""
+    return "${method.uppercase()}\n" +
+            "${accept ?: ""}\n" +
+            "${contentType ?: ""}\n" +
+            "$bodyLength\n" +
+            "$timestamp\n" +
+            "$bodyHash\n" +
+            canonicalUrl
+}
+
+fun vidrockEncode(tmdb: String, type: String, season: Int? = null, episode: Int? = null): String {
+    val base = if (type == "tv" && season != null && episode != null) {
+        "$tmdb-$season-$episode"
+    } else {
+        val map = mapOf(
+            '0' to 'a', '1' to 'b', '2' to 'c', '3' to 'd', '4' to 'e',
+            '5' to 'f', '6' to 'g', '7' to 'h', '8' to 'i', '9' to 'j'
+        )
+        tmdb.map { map[it] ?: it }.joinToString("")
+    }
+    val reversed = base.reversed()
+    val firstEncode = base64Encode(reversed.toByteArray())
+    val doubleEncode = base64Encode(firstEncode.toByteArray())
+
+    return doubleEncode
+}
+
+fun cinemaOSGenerateHash(t: CinemaOsSecretKeyRequest,isSeries: Boolean): String {
+    val primary = "a7f3b9c2e8d4f1a6b5c9e2d7f4a8b3c6e1d9f7a4b2c8e5d3f9a6b4c1e7d2f8a5"
+    val secondary = "d3f8a5b2c9e6d1f7a4b8c5e2d9f3a6b1c7e4d8f2a9b5c3e7d4f1a8b6c2e9d5f3"
+
+
+    // Create content identifier string
+    val contentString = createContentString(t)
+
+    // First HMAC with primary key
+    val firstHash = calculateHmacSha256(contentString, primary)
+
+    // Second HMAC with secondary key
+    return calculateHmacSha256(firstHash, secondary)
+
+}
+
+
+private fun createContentString(info: CinemaOsSecretKeyRequest): String {
+    val parts = mutableListOf<String>()
+
+    info.tmdbId.let { parts.add("tmdbId:$it") }
+    info.imdbId.let { parts.add("imdbId:$it") }
+    info.seasonId.takeIf { it.isNotEmpty() }?.let { parts.add("seasonId:$it") }
+    info.episodeId.takeIf { it.isNotEmpty() }?.let { parts.add("episodeId:$it") }
+
+    return parts.joinToString("|")
+}
+
+private fun calculateHmacSha256(data: String, key: String): String {
+    val algorithm = "HmacSHA256"
+    val secretKeySpec = SecretKeySpec(key.toByteArray(), algorithm)
+    val mac = Mac.getInstance(algorithm)
+    mac.init(secretKeySpec)
+
+    val bytes = mac.doFinal(data.toByteArray())
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
+// Helper function to convert byte array to hex string
+fun bytesToHex(bytes: ByteArray): String {
+    val hexChars = CharArray(bytes.size * 2)
+    for (i in bytes.indices) {
+        val v = bytes[i].toInt() and 0xFF
+        hexChars[i * 2] = "0123456789abcdef"[v ushr 4]
+        hexChars[i * 2 + 1] = "0123456789abcdef"[v and 0x0F]
+    }
+    return String(hexChars)
+}
+
+
+fun cinemaOSDecryptResponse(e: CinemaOSReponseData?): Any {
+    val encrypted = e?.encrypted
+    val cin = e?.cin
+    val mao = e?.mao
+    val salt = e?.salt
+
+    val keyBytes =  "a1b2c3d4e4f6477658455678901477567890abcdef1234567890abcdef123456".toByteArray()
+    val ivBytes = hexStringToByteArray(cin.toString())
+    val authTagBytes = hexStringToByteArray(mao.toString())
+    val encryptedBytes =hexStringToByteArray(encrypted.toString())
+    val saltBytes = hexStringToByteArray(salt.toString())
+
+    // Derive key with PBKDF2-HMAC-SHA256
+    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    val spec = PBEKeySpec(keyBytes.map { it.toInt().toChar() }.toCharArray(), saltBytes, 100000, 256)
+    val tmp = factory.generateSecret(spec)
+    val key = SecretKeySpec(tmp.encoded, "AES")
+
+    // AES-256-GCM decrypt
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    val gcmSpec = GCMParameterSpec(128, ivBytes)
+    cipher.init(Cipher.DECRYPT_MODE, key, gcmSpec)
+    val decryptedBytes = cipher.doFinal(encryptedBytes + authTagBytes)
+    val decryptedData = String(decryptedBytes)
+
+    return decryptedData // Use your JSON parser
+}
+
+
+// Helper function to convert hex string to byte array
+fun hexStringToByteArray(hex: String): ByteArray {
+    val len = hex.length
+    require(len % 2 == 0) { "Hex string must have even length" }
+
+    val data = ByteArray(len / 2)
+    var i = 0
+    while (i < len) {
+        data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+        i += 2
+    }
+    return data
+}
+
+fun parseCinemaOSSources(jsonString: String): List<Map<String, String>> {
+    val json = JSONObject(jsonString)
+    val sourcesObject = json.getJSONObject("sources")
+    val sourcesList = mutableListOf<Map<String, String>>()
+
+    val keys = sourcesObject.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        val source = sourcesObject.getJSONObject(key)
+
+        // Check if source has "qualities" object
+        if (source.has("qualities")) {
+            val qualities = source.getJSONObject("qualities")
+            val qualityKeys = qualities.keys()
+
+            while (qualityKeys.hasNext()) {
+                val qualityKey = qualityKeys.next()
+                val qualityObj = qualities.getJSONObject(qualityKey)
+
+                val sourceMap = mutableMapOf<String, String>()
+                sourceMap["server"] = source.optString("server", key)
+                sourceMap["url"] = qualityObj.optString("url", "")
+                sourceMap["type"] = qualityObj.optString("type", "")
+                sourceMap["speed"] = source.optString("speed", "")
+                sourceMap["bitrate"] = source.optString("bitrate", "")
+                sourceMap["quality"] = qualityKey // Use the quality key (e.g., "480", "720")
+
+                sourcesList.add(sourceMap)
+            }
+        } else {
+            // Regular source with direct URL
+            val sourceMap = mutableMapOf<String, String>()
+            sourceMap["server"] = source.optString("server", key)
+            sourceMap["url"] = source.optString("url", "")
+            sourceMap["type"] = source.optString("type", "")
+            sourceMap["speed"] = source.optString("speed", "")
+            sourceMap["bitrate"] = source.optString("bitrate", "")
+            sourceMap["quality"] = source.optString("quality", "")
+
+            sourcesList.add(sourceMap)
+        }
+    }
+
+    return sourcesList
+}
+
+
+
+fun toHex(bytes: ByteArray): String {
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
+
+// Hex → ByteArray
+fun fromHex(hex: String): ByteArray {
+    val cleanHex = hex.replace(Regex("[^0-9a-fA-F]"), "")
+    require(cleanHex.length % 2 == 0) { "Invalid hex" }
+    return ByteArray(cleanHex.length / 2) { i ->
+        cleanHex.substring(2 * i, 2 * i + 2).toInt(16).toByte()
+    }
+}
+
+// AES key validator
+fun importKey(rawKey: ByteArray): SecretKeySpec {
+    require(rawKey.size == 16 || rawKey.size == 32) { "AES_KEY must be 16 or 32 bytes" }
+    return SecretKeySpec(rawKey, "AES")
+}
+
+// AES-CBC decryption
+fun aesDecrypt(cipherHex: String, keyBytes: ByteArray, ivBytes: ByteArray): String {
+    val decrypted = try {
+        require(ivBytes.size == 16) { "AES_IV must be 16 bytes" }
+
+        val cipherBytes = fromHex(cipherHex)
+        val keySpec = importKey(keyBytes)
+        val ivSpec = IvParameterSpec(ivBytes)
+
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
+
+        cipher.doFinal(cipherBytes)
+    } catch (e: Exception) {
+        TODO("Not yet implemented")
+    }
+    return decrypted.toString(Charsets.UTF_8)
+}
+
+
+fun hexStringToByteArray2(hex: String): ByteArray {
+    val result = ByteArray(hex.length / 2)
+    for (i in hex.indices step 2) {
+        val value = hex.substring(i, i + 2).toInt(16)
+        result[i / 2] = value.toByte()
+    }
+    return result
+}
+
+/**
+ * PKCS7 padding implementation
+ */
+fun padData(data: ByteArray, blockSize: Int): ByteArray {
+    val padding = blockSize - (data.size % blockSize)
+    val result = ByteArray(data.size + padding)
+    System.arraycopy(data, 0, result, 0, data.size)
+    for (i in data.size until result.size) {
+        result[i] = padding.toByte()
+    }
+    return result
+}
+
+fun customEncode(input: ByteArray): String {
+    val sourceChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    val targetChars = "4stjqN6BT05-L8rQe_HxWmAVv9icYKaCDzIP1fZ7kwXRyFhd2GEng3SMJlUubOop"
+
+    val translationMap = sourceChars.zip(targetChars).toMap()
+    val encoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Base64.getUrlEncoder().withoutPadding().encodeToString(input)
+    } else {
+        TODO("VERSION.SDK_INT < O")
+    }
+
+    return encoded.map { char ->
+        translationMap[char] ?: char
+    }.joinToString("")
+}
+
+fun parseServers(jsonString: String): List<VidFastServer> {
+    val servers = mutableListOf<VidFastServer>()
+    try {
+        val jsonArray = JSONArray(jsonString)
+        for (i in 0 until jsonArray.length()) {
+            val jsonObject = jsonArray.getJSONObject(i)
+            val server = VidFastServer(
+                name = jsonObject.getString("name"),
+                description = jsonObject.getString("description"),
+                image = jsonObject.getString("image"),
+                data = jsonObject.getString("data")
+            )
+            servers.add(server)
+        }
+    } catch (e: Exception) {
+        Log.e("salman731", "Manual parsing failed: ${e.message}")
+    }
+    return servers
+}
+
+fun derivePbkdf2Key(
+    password: String,
+    salt: ByteArray,
+    iterations: Int,
+    keyLength: Int
+): ByteArray {
+    val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+    val spec: KeySpec = PBEKeySpec(password.toCharArray(), salt, iterations, keyLength * 8)
+    return factory.generateSecret(spec).encoded
+}
+
+
+/**
+ * Remove PKCS7 padding
+ */
+fun unpadData(data: ByteArray): ByteArray {
+    val padding = data[data.size - 1].toInt() and 0xFF
+    if (padding < 1 || padding > data.size) {
+        return data
+    }
+    return data.copyOf(data.size - padding)
+}
+
+fun hasHost(url: String): Boolean {
+    return try {
+        val host = URL(url).host
+        !host.isNullOrEmpty()
+    } catch (e: Exception) {
+        false
+    }
+}
+
+fun generateKeyIv(keySize: Int = 32): KeyIvResult {
+
+    val secureRandom = SecureRandom()
+
+    val keyBytes = ByteArray(keySize)
+    secureRandom.nextBytes(keyBytes)
+
+    val ivBytes = ByteArray(16) // 16 bytes for AES IV
+    secureRandom.nextBytes(ivBytes)
+
+    return KeyIvResult(
+        keyBytes = keyBytes,
+        ivBytes = ivBytes,
+        keyHex = toHex(keyBytes),
+        ivHex = toHex(ivBytes)
+    )
+}
+/**
+ * Run multiple suspend functions concurrently with a limit on simultaneous executions.
+ *
+ * @param concurrency Limit of concurrent tasks.
+ * @param tasks Vararg of suspend functions to execute.
+ */
+suspend fun runLimitedAsync(
+    concurrency: Int = 5,
+    vararg tasks: suspend () -> Unit
+) = coroutineScope {
+    val semaphore = Semaphore(concurrency)
+
+    tasks.map { task ->
+        async(Dispatchers.IO) {
+            semaphore.withPermit {
+                try {
+                    task()
+                } catch (e: Exception) {
+                    // Log error but continue
+                    Log.e("runLimitedAsync", "Task failed: ${e.message}")
+                }
+            }
+        }
+    }.awaitAll()
+}
+
+
+fun decryptVidzeeUrl(encrypted: String, key: ByteArray): String {
+    val decoded = base64Decode(encrypted)
+    val parts = decoded.split(":")
+    if (parts.size != 2) throw IllegalArgumentException("Invalid encrypted format")
+
+    val iv = base64DecodeArray(parts[0])
+    val cipherData = base64DecodeArray(parts[1])
+
+    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+    val secretKey = SecretKeySpec(key, "AES")
+    cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
+
+    val decryptedBytes = cipher.doFinal(cipherData)
+    return decryptedBytes.toString(Charsets.UTF_8)
+}
+
+suspend fun yflixDecode(text: String?): String {
+    return try {
+        val res = app.get("${BuildConfig.YFXENC}?text=$text").text
+        JSONObject(res).getString("result")
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+private val JSON = "application/json; charset=utf-8".toMediaType()
+
+suspend fun yflixDecodeReverse(text: String): String {
+    val jsonBody = """{"text":"$text"}""".toRequestBody(JSON)
+
+    return try {
+        val res = app.post(
+            BuildConfig.YFXDEC,
+            requestBody = jsonBody
+        ).text
+        JSONObject(res).getString("result")
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+fun yflixextractVideoUrlFromJson(jsonData: String): String {
+    val jsonObject = JSONObject(jsonData)
+    return jsonObject.getString("url")
+}
+
+
+suspend fun <T> retry(
+    times: Int = 3,
+    delayMillis: Long = 1000,
+    block: suspend () -> T
+): T? {
+    repeat(times) { attempt ->
+        try {
+            return block()
+        } catch (_: Throwable) {
+            if (attempt < times - 1) delay(delayMillis)
+        }
+    }
+    return null
+}
+
+fun String.fixSourceUrl(): String {
+    return this.replace("/manifest.json", "").replace("stremio://", "https://")
+}
+
+fun generateHexKey32(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
+
+
+suspend fun fetchTmdbLogoUrl(
+    tmdbAPI: String,
+    apiKey: String,
+    type: TvType,
+    tmdbId: Int?,
+    appLangCode: String?
+): String? {
+
+    if (tmdbId == null) return null
+
+    val url = if (type == TvType.Movie)
+        "$tmdbAPI/movie/$tmdbId/images?api_key=$apiKey"
+    else
+        "$tmdbAPI/tv/$tmdbId/images?api_key=$apiKey"
+
+    val json = runCatching { JSONObject(app.get(url).text) }.getOrNull() ?: return null
+    val logos = json.optJSONArray("logos") ?: return null
+    if (logos.length() == 0) return null
+
+    val lang = appLangCode?.trim()?.lowercase()?.substringBefore("-")
+
+    fun path(o: JSONObject) = o.optString("file_path")
+    fun isSvg(o: JSONObject) = path(o).endsWith(".svg", true)
+    fun urlOf(o: JSONObject) = "https://image.tmdb.org/t/p/w500${path(o)}"
+
+    // Language match
+    var svgFallback: JSONObject? = null
+
+    for (i in 0 until logos.length()) {
+        val logo = logos.optJSONObject(i) ?: continue
+        val p = path(logo)
+        if (p.isBlank()) continue
+
+        val l = logo.optString("iso_639_1").trim().lowercase()
+        if (l == lang) {
+            if (!isSvg(logo)) return urlOf(logo)
+            if (svgFallback == null) svgFallback = logo
+        }
+    }
+    svgFallback?.let { return urlOf(it) }
+
+    // Highest voted fallback
+    var best: JSONObject? = null
+    var bestSvg: JSONObject? = null
+
+    fun voted(o: JSONObject) = o.optDouble("vote_average", 0.0) > 0 && o.optInt("vote_count", 0) > 0
+
+    fun better(a: JSONObject?, b: JSONObject): Boolean {
+        if (a == null) return true
+        val aAvg = a.optDouble("vote_average", 0.0)
+        val aCnt = a.optInt("vote_count", 0)
+        val bAvg = b.optDouble("vote_average", 0.0)
+        val bCnt = b.optInt("vote_count", 0)
+        return bAvg > aAvg || (bAvg == aAvg && bCnt > aCnt)
+    }
+
+    for (i in 0 until logos.length()) {
+        val logo = logos.optJSONObject(i) ?: continue
+        if (!voted(logo)) continue
+
+        if (isSvg(logo)) {
+            if (better(bestSvg, logo)) bestSvg = logo
+        } else {
+            if (better(best, logo)) best = logo
+        }
+    }
+
+    best?.let { return urlOf(it) }
+    bestSvg?.let { return urlOf(it) }
+
+    // No language match & no voted logos
+    return null
+}
+
+fun String?.fixTitle(): String? {
+    return this?.replace(Regex("[!%:']|( &)"), "")?.replace(" ", "-")?.lowercase()
+        ?.replace("-–-", "-")
+}
+private val QUALITY_REGEX_MAP = listOf(
+    Regex("""\b(4k|2160p?|2160)\b""", RegexOption.IGNORE_CASE) to Qualities.P2160.value,
+    Regex("""\b1440p?|1440\b""", RegexOption.IGNORE_CASE)     to Qualities.P1440.value,
+    Regex("""\b1080p?|1080\b""", RegexOption.IGNORE_CASE)     to Qualities.P1080.value,
+    Regex("""\b720p?|720\b""", RegexOption.IGNORE_CASE)      to Qualities.P720.value,
+    Regex("""\b480p?|480\b""", RegexOption.IGNORE_CASE)      to Qualities.P480.value
+)
+suspend fun getSessionAndCsrfforFlixindia(baseUrl: String): Pair<String, String>? {
+    val res = app.get(baseUrl)
+
+    val sessionId = res.cookies["PHPSESSID"] ?: return null
+
+    val csrf = Regex(
+        """window\.CSRF_TOKEN\s*=\s*['"]([a-f0-9]{64})['"]"""
+    ).find(res.text)?.groupValues?.get(1) ?: return null
+
+    return sessionId to csrf
+}
+
+suspend fun getHindMoviezLinks(
+    source: String,
+    url: String,
+    callback: (ExtractorLink) -> Unit
+) {
+    val response = app.get(url)
+    val doc = response.document
+
+    val name = doc.selectFirst("div.container p:contains(Name:)")
+        ?.text()
+        ?.substringAfter("Name:")
+        ?.trim()
+        .orEmpty()
+
+    val fileSize = doc.selectFirst("div.container p:contains(Size:)")
+        ?.text()
+        ?.substringAfter("Size:")
+        ?.trim()
+        .orEmpty()
+
+    val extractedSpecs = buildExtractedTitle(extractSpecs(name))
+    val quality = getIndexQuality(name)
+
+    runAllAsync(
+
+        // Primary links
+        {
+            val redirectUrl = doc.selectFirst("a.btn-info")?.attr("href") ?: return@runAllAsync
+            val redirectDoc = app.get(redirectUrl, referer = response.url).document
+
+            redirectDoc.select("a.button").forEach { btn ->
+                callback(
+                    newExtractorLink(
+                        source,
+                        "$source $extractedSpecs[$fileSize]",
+                        btn.attr("href"),
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = quality
+                    }
+                )
+            }
+        },
+
+        // HCloud
+        {
+            val hCloudUrl = doc.selectFirst("a.btn-dark")?.attr("href") ?: return@runAllAsync
+
+            callback(
+                newExtractorLink(
+                    "$source[HCloud]",
+                    "$source[HCloud] $extractedSpecs[$fileSize]",
+                    hCloudUrl,
+                    ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = quality
+                }
+            )
+        }
+    )
+}
+
+fun buildExtractedTitle(extracted: Map<String, List<String>>): String {
+    val orderedCategories = listOf("quality", "codec", "audio", "hdr", "language")
+
+    val specs = orderedCategories
+        .flatMap { extracted[it] ?: emptyList() }
+        .distinct()
+        .joinToString(" ")
+
+    val size = extracted["size"]?.firstOrNull()
+
+    return if (size != null) {
+        "$specs [$size]"
+    } else {
+        specs
+    }
+}
+
+val SPEC_OPTIONS = mapOf(
+    "quality" to listOf(
+        mapOf("value" to "BluRay", "label" to "BluRay"),
+        mapOf("value" to "BluRay REMUX", "label" to "BluRay REMUX"),
+        mapOf("value" to "BRRip", "label" to "BRRip"),
+        mapOf("value" to "BDRip", "label" to "BDRip"),
+        mapOf("value" to "WEB-DL", "label" to "WEB-DL"),
+        mapOf("value" to "HDRip", "label" to "HDRip"),
+        mapOf("value" to "DVDRip", "label" to "DVDRip"),
+        mapOf("value" to "HDTV", "label" to "HDTV"),
+        mapOf("value" to "CAM", "label" to "CAM"),
+        mapOf("value" to "TeleSync", "label" to "TeleSync"),
+        mapOf("value" to "SCR", "label" to "SCR"),
+        mapOf("value" to "10bit", "label" to "10bit"),
+        mapOf("value" to "8bit", "label" to "8bit"),
+    ),
+    "codec" to listOf(
+        mapOf("value" to "x264", "label" to "x264"),
+        mapOf("value" to "x265", "label" to "x265 (HEVC)"),
+        mapOf("value" to "h.264", "label" to "H.264 (AVC)"),
+        mapOf("value" to "h.265", "label" to "H.265 (HEVC)"),
+        mapOf("value" to "hevc", "label" to "HEVC"),
+        mapOf("value" to "avc", "label" to "AVC"),
+        mapOf("value" to "mpeg-2", "label" to "MPEG-2"),
+        mapOf("value" to "mpeg-4", "label" to "MPEG-4"),
+        mapOf("value" to "vp9", "label" to "VP9")
+    ),
+    "audio" to listOf(
+        mapOf("value" to "AAC", "label" to "AAC"),
+        mapOf("value" to "AC3", "label" to "AC3 (Dolby Digital)"),
+        mapOf("value" to "DTS", "label" to "DTS"),
+        mapOf("value" to "DTS-HD MA", "label" to "DTS-HD MA"),
+        mapOf("value" to "TrueHD", "label" to "Dolby TrueHD"),
+        mapOf("value" to "Atmos", "label" to "Dolby Atmos"),
+        mapOf("value" to "DD+", "label" to "DD+"),
+        mapOf("value" to "Dolby Digital Plus", "label" to "Dolby Digital Plus"),
+        mapOf("value" to "DTS Lossless", "label" to "DTS Lossless")
+    ),
+    "hdr" to listOf(
+        mapOf("value" to "DV", "label" to "Dolby Vision"),
+        mapOf("value" to "HDR10+", "label" to "HDR10+"),
+        mapOf("value" to "HDR", "label" to "HDR"),
+        mapOf("value" to "SDR", "label" to "SDR")
+    ),
+    "language" to listOf(
+        mapOf("value" to "HIN", "label" to "Hindi🇮🇳"),
+        mapOf("value" to "Hindi", "label" to "Hindi🇮🇳"),
+        mapOf("value" to "Tamil", "label" to "Tamil🇮🇳"),
+        mapOf("value" to "ENG", "label" to "English🇺🇸"),
+        mapOf("value" to "English", "label" to "English🇺🇸"),
+        mapOf("value" to "Korean", "label" to "Korean🇰🇷"),
+        mapOf("value" to "KOR", "label" to "Korean🇰🇷"),
+        mapOf("value" to "Japanese", "label" to "Japanese🇯🇵"),
+        mapOf("value" to "Chinese", "label" to "Chinese🇨🇳"),
+        mapOf("value" to "Telugu", "label" to "Telugu🇮🇳"),
+    )
+)
+
+fun extractSpecs(inputString: String): Map<String, List<String>> {
+    val results = mutableMapOf<String, List<String>>()
+
+    SPEC_OPTIONS.forEach { (category, options) ->
+        val matches = options.filter { option ->
+            val value = option["value"] as String
+            val regexPattern = "\\b${Regex.escape(value)}\\b".toRegex(RegexOption.IGNORE_CASE)
+            regexPattern.containsMatchIn(inputString)
+        }.map { it["label"] as String }
+
+        results[category] = matches
+    }
+
+    val fileSizeRegex = """(\d+(?:\.\d+)?\s?(?:MB|GB))""".toRegex(RegexOption.IGNORE_CASE)
+    val sizeMatch = fileSizeRegex.find(inputString)
+    if (sizeMatch != null) {
+        results["size"] = listOf(sizeMatch.groupValues[1])
+    }
+
+    return results.toMap()
 }
 

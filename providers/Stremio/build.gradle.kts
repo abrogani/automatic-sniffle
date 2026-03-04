@@ -47,12 +47,15 @@ flxProvider {
         - Remove built-in opensubs-v3 addon
         - Allow subtitles addons
         - Fix default metadata loading (Cinemata)
+        
+        #### 1.2.7-1
+        - Fix resource not found error when opening provider settings
         """.trimIndent()
 
     versionMajor = 1
     versionMinor = 2
     versionPatch = 7
-    versionBuild = 0
+    versionBuild = 1
 
 
     // Extra authors for specific provider

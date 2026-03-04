@@ -1,5 +1,6 @@
 package com.abrogani.streamplay
 
+import android.os.Build
 import com.abrogani.streamplay.util.Mapper.toLinkDataString
 import com.abrogani.streamplay.util.Mapper.toStream
 import com.abrogani.streamplay.util.Mapper.toSubtitle
@@ -76,18 +77,18 @@ class StreamPlayApi(
     ) {
         asyncCalls(
             {
-                streamPlay.loadLinks(
-                    data = film.toLinkDataString(episode),
-                    isCasting = false,
-                    subtitleCallback = {
-                        onLinkFound(it.toSubtitle())
-                    },
-                    callback = {
-                        onLinkFound(it.toStream())
-                    }
-                )
-
-                // app.baseClient.connectionPool.evictAll()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    streamPlay.loadLinks(
+                        data = film.toLinkDataString(episode),
+                        isCasting = false,
+                        subtitleCallback = {
+                            onLinkFound(it.toSubtitle())
+                        },
+                        callback = {
+                            onLinkFound(it.toStream())
+                        }
+                    )
+                }
             },
             {
                 streamPlayAnime.loadLinks(
