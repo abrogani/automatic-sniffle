@@ -43,7 +43,6 @@ include(
     "SuperStream",
     "FlixHQ",
     "Sudo-Flix",
-    "Stremio",
     "LookMovie",
 )
 

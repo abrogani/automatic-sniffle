@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="cancel">Cancel</string>
-
-    <string name="clear_text_button_content_desc">Clear text</string>
-    <string name="addon_icon_content_desc">Addon icon</string>
-    <string name="add_addon_icon_content_desc">Add addon</string>
-</resources>
