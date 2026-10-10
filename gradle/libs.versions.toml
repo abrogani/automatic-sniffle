@@ -7,7 +7,6 @@ compose-bom = "2026.05.01"
 core-gradle = "1.5.1"
 core-stubs = "1.4.0"
 coroutines = "1.10.2"
-coroutines-bundled = "1.11.0"
 datastore = "1.2.1"
 desugar = "2.1.5"
 gson = "2.14.0"
@@ -52,7 +51,6 @@ desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", ver
 
 kotlinx-coroutines = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
-kotlinx-coroutines-bundled = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines-bundled" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }

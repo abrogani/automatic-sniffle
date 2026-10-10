@@ -21,10 +21,6 @@ import com.flixclusive.provider.capability.MediaLinkType
 import com.abrogani.streamplay.loader.Cs3PluginLoader
 import com.lagradost.cloudstream3.MainAPI
 
-/**
- * This is a set of providers combined into one. It has no catalog of its own: every source
- * resolves links straight from the TMDB/IMDb ids of the media it is handed.
- * */
 class StreamPlayApi internal constructor(
     private val context: Context,
     private val providerId: String,
@@ -33,7 +29,6 @@ class StreamPlayApi internal constructor(
 
     override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
 
-    // Nothing to look up: the sources are keyed by the ids the media already carries.
     override suspend fun getById(
         mediaType: MediaType,
         sourceIds: Map<MediaIdSource, String>,
@@ -65,14 +60,12 @@ class StreamPlayApi internal constructor(
     ) {
         val data = media.toLinkDataString(episode)
 
-        // The plugin registers its own providers (the TMDB-based one and the anime one).
         val apis = loader.load(context).apis
         val failures = java.util.Collections.synchronizedList(mutableListOf<LinkageError>())
 
         asyncCalls(
             *apis.map<MainAPI, suspend () -> Unit> { api ->
                 {
-                    // The TMDB-based provider needs API 26+.
                     if (api.name != TMDB_PROVIDER_NAME || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         try {
                             api.loadLinks(
@@ -82,8 +75,6 @@ class StreamPlayApi internal constructor(
                                 callback = { onLinkFound(it.toStream()) }
                             )
                         } catch (e: LinkageError) {
-                            // Built against newer libraries than the host ships; don't let one
-                            // provider take the others down with it.
                             errorLog("[StreamPlay] ${api.name} is incompatible with this host: $e")
                             failures.add(e)
                         }
@@ -92,7 +83,6 @@ class StreamPlayApi internal constructor(
             }.toTypedArray()
         )
 
-        // Only surface the error when nothing could run at all.
         if (failures.size == apis.size) throw failures.first()
     }
 

@@ -14,7 +14,6 @@ class StreamPlay : ProviderPlugin() {
 
     private var api: StreamPlayApi? = null
 
-    // `manifest` is injected after construction, so the API must be built lazily.
     private fun getApi(context: Context) = api ?: StreamPlayApi(
         context = context.applicationContext ?: context,
         providerId = id,

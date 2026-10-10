@@ -54,6 +54,16 @@ class StreamPlayApiTest {
     }
 
     @Test
+    fun setsCloudStreamContext() = runBlocking {
+        loader.load(context)
+
+        val holder = Class.forName("com.lagradost.api.ContextHelper_androidKt")
+            .getMethod("getContext")
+            .invoke(null)
+        assertTrue("CloudStream context not set", holder is android.content.Context)
+    }
+
+    @Test
     @Throws(Exception::class)
     fun getLinks() = runBlocking {
         val links = mutableListOf<MediaLink>()

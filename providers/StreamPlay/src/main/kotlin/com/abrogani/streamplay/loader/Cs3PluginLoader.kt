@@ -18,17 +18,10 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import org.json.JSONObject
 import java.io.File
+import java.lang.ref.WeakReference
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
-/**
- * Downloads the pre-built StreamPlay `.cs3` (a zip holding `classes.dex` + `manifest.json`),
- * verifies it against [Cs3Source.SHA256], loads it with a [DexClassLoader] and returns the
- * `MainAPI`s the plugin registered.
- *
- * The plugin is compiled against CloudStream's API, so the CloudStream classes bundled in this
- * `.flx` are used as the parent class loader.
- */
 internal class Cs3PluginLoader(
     private val client: OkHttpClient
 ) {
@@ -45,6 +38,7 @@ internal class Cs3PluginLoader(
         loaded?.let { return it }
 
         val appContext = context.applicationContext ?: context
+        initCloudStreamContext(appContext)
         val file = ensureFile(appContext)
         val manifest = readManifest(file)
 
@@ -68,14 +62,11 @@ internal class Cs3PluginLoader(
             try {
                 plugin.load(appContext)
             } catch (e: LinkageError) {
-                // The plugin may be built against newer libraries than the host ships (e.g. coroutines
-                // 1.11's `runBlockingK`). It registers its providers before its extractors, so whatever
-                // registered before the failure is still usable.
+                // Providers register before extractors, so what loaded before the failure still works.
                 warnLog("[StreamPlay] Plugin finished loading with a binary incompatibility: $e")
             }
         }
 
-        // The plugin registers its APIs in CloudStream's global holder; pick out only ours.
         val apis = APIHolder.allProviders.filter { it.javaClass.classLoader === classLoader }
         check(apis.isNotEmpty()) { "StreamPlay plugin did not register any providers" }
 
@@ -95,6 +86,26 @@ internal class Cs3PluginLoader(
         Unit
     }
 
+    private fun initCloudStreamContext(context: Context) {
+        // Reflection: the compiler rejects these as prerelease-only APIs.
+        runCatching {
+            Class.forName("com.lagradost.api.ContextHelper_androidKt")
+                .getMethod("setCtx", WeakReference::class.java)
+                .invoke(null, WeakReference(context))
+        }.onFailure { warnLog("[StreamPlay] Could not set CloudStream's context holder: $it") }
+
+        runCatching {
+            val companion = Class.forName("com.lagradost.cloudstream3.CloudStreamApp\$Companion")
+            val instance = Class.forName("com.lagradost.cloudstream3.CloudStreamApp")
+                .getField("Companion")
+                .get(null)
+
+            companion.getDeclaredMethod("setContext", Context::class.java)
+                .apply { isAccessible = true }
+                .invoke(instance, context)
+        }.onFailure { warnLog("[StreamPlay] Could not set CloudStreamApp.context: $it") }
+    }
+
     private suspend fun ensureFile(context: Context): File = withIOContext {
         val dir = File(context.codeCacheDir, "streamplay").apply { mkdirs() }
         val file = File(dir, "StreamPlay-${Cs3Source.COMMIT}.cs3")
@@ -103,7 +114,6 @@ internal class Cs3PluginLoader(
             return@withIOContext file
         }
 
-        // Drop stale/corrupt copies (they are read-only, see below).
         dir.listFiles()?.forEach { it.setWritable(true); it.delete() }
 
         infoLog("[StreamPlay] Downloading plugin from ${Cs3Source.URL}")
@@ -120,7 +130,7 @@ internal class Cs3PluginLoader(
         }
 
         check(temp.renameTo(file)) { "Could not store StreamPlay plugin" }
-        // Android 14+ refuses to load a writable dex container.
+        // Android 14+ refuses to load a writable dex file.
         file.setReadOnly()
         file
     }
@@ -132,7 +142,6 @@ internal class Cs3PluginLoader(
             JSONObject(zip.getInputStream(entry).bufferedReader().readText())
         }
 
-    /** Same approach CloudStream itself uses so the plugin can read its own `res/`. */
     @Suppress("DiscouragedPrivateApi")
     private fun attachResources(context: Context, plugin: Plugin, file: File) {
         try {

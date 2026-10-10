@@ -4,14 +4,8 @@ import com.flixclusive.model.provider.ProviderType
 import com.flixclusive.model.provider.ProviderStatus
 
 dependencies {
-    // Used by the pre-built StreamPlay plugin; CloudStream's app normally supplies them.
     implementation(libs.ktor.http)
     implementation(libs.ksoup)
-
-    // The plugin is compiled against coroutines 1.11 (plain `runBlocking` becomes `runBlockingK`),
-    // but the host ships 1.10.2. Bundled here on purpose; the rest of the repo compiles against
-    // the host's version. Whether the bundled copy wins depends on the host's class loader.
-    implementation(libs.kotlinx.coroutines.bundled)
 
 //noinspection Aligned16KB
     implementation(libs.quickjs)

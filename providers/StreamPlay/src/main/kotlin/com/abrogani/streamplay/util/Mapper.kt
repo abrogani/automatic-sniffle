@@ -54,8 +54,6 @@ internal object Mapper {
         val episodeReleaseDate = reformatDate(episode?.releaseDate)
         val lastSeason = if (episode != null) (this as? Show)?.totalSeasons else null
 
-        // Mirrors the fields of the plugin's internal `LinkData`. The class is not available at
-        // compile time (the plugin is loaded at runtime), so it is sent as plain JSON.
         val linkData = mapOf(
             "id" to tmdbId?.toIntOrNull(),
             "title" to title,
