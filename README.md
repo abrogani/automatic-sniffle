@@ -8,4 +8,3 @@
 | LookMovie | 🔵 BETA |
 | Stremio | 🟢 OK |
 | StreamPlay | 🟢 OK |
-| CodeStream | 🟢 OK |

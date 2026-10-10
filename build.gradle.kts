@@ -22,7 +22,6 @@ val csJar = csJarFolder.resolve("cloudstream.jar")
 
 // Providers that are CloudStream (CS3) adapters
 val cs3Providers = setOf(
-    "CodeStream",
     "StreamPlay"
 )
 

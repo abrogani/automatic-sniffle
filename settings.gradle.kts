@@ -38,7 +38,6 @@ rootProject.name = "automatic-sniffle"
  * to the includes below.
  * */
 include(
-    "CodeStream",
     "StreamPlay",
     "SuperStream",
     "FlixHQ",
