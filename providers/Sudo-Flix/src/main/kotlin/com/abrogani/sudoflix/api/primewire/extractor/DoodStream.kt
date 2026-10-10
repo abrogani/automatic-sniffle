@@ -4,7 +4,7 @@ import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.Flag
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import com.abrogani.sudoflix.api.util.ExtractorHelper.getRedirectedUrl
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient

@@ -3,7 +3,7 @@ package com.abrogani.sudoflix.api.ridomovies.extractor
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import com.abrogani.sudoflix.api.ridomovies.RidoMoviesConstant.RIDO_MOVIES_BASE_URL
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient

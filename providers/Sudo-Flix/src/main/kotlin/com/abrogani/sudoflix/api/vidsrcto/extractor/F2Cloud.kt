@@ -1,10 +1,10 @@
 package com.abrogani.sudoflix.api.vidsrcto.extractor
 
 import com.flixclusive.core.util.network.Crypto.base64Encode
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 import javax.crypto.Cipher

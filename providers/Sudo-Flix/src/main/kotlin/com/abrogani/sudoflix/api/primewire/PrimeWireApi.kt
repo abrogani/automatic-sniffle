@@ -3,16 +3,18 @@ package com.abrogani.sudoflix.api.primewire
 import com.flixclusive.core.util.coroutines.asyncCalls
 import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.exception.safeCall
-import com.flixclusive.model.film.util.FilmType
 import com.flixclusive.core.util.network.Crypto
 import com.flixclusive.core.util.network.jsoup.asJsoup
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.tv.Episode
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
 import com.abrogani.sudoflix.api.opensubs.SubtitleUtil.fetchSubtitles
 import com.abrogani.sudoflix.api.primewire.extractor.DoodStream
 import com.abrogani.sudoflix.api.primewire.extractor.DropLoad
@@ -29,14 +31,12 @@ import org.jsoup.nodes.Document
 
 @Suppress("SpellCheckingInspection")
 internal class PrimeWireApi(
-    client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
+    private val client: OkHttpClient
+) : MediaLinkProviderApi {
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
+
     private val name = "PrimeWire"
-    override val baseUrl = "https://www.primewire.tf"
+    private val baseUrl = "https://www.primewire.tf"
 
     private val extractors = mapOf(
         "mixdrop" to MixDrop(client),
@@ -51,12 +51,11 @@ internal class PrimeWireApi(
     )
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        val imdbId = film.imdbId
+        val imdbId = media.imdbId
             ?: throw NullPointerException("[$name]> Could not get IMDB ID")
 
         val id = getMediaId(imdbId = imdbId)
@@ -64,7 +63,7 @@ internal class PrimeWireApi(
             id = id,
             season = episode?.season,
             episode = episode?.number,
-            filmType = film.filmType
+            filmType = media.type
         )
 
         asyncCalls(
@@ -109,10 +108,10 @@ internal class PrimeWireApi(
         id: Int,
         season: Int?,
         episode: Int?,
-        filmType: FilmType
+        filmType: MediaType
     ): List<Pair<String, String>> {
         var html = client.request(
-            url = "$baseUrl/${filmType.type}/$id"
+            url = "$baseUrl/${if (filmType.isMovie) "movie" else "tv"}/$id"
         ).execute()
             .asJsoup()
 

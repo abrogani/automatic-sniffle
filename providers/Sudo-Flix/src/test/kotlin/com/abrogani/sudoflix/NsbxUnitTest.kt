@@ -3,7 +3,8 @@ package com.abrogani.sudoflix
 import android.net.Uri
 import com.flixclusive.core.util.log.LogRule
 import com.flixclusive.core.util.network.okhttp.ignoreAllSSLErrors
-import com.flixclusive.model.film.Movie
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.common.MediaIdSource
 import com.flixclusive.model.provider.link.MediaLink
 import com.abrogani.sudoflix.api.nsbx.VidBingeApi
 import io.mockk.every
@@ -19,20 +20,19 @@ class NsbxUnitTest {
     val rule = LogRule()
 
     private lateinit var client: OkHttpClient
-    private val api = VidBingeApi(
-        OkHttpClient(),
-        SudoFlix()
-    )
+    private val api = VidBingeApi(OkHttpClient())
 
     private val movie = Movie(
-        tmdbId = 299534,
-        imdbId = "tt4154796",
+        id = "299534",
+        externalIds = mapOf(
+            MediaIdSource.TMDB to "299534",
+            MediaIdSource.IMDB to "tt4154796",
+        ),
         title = "Avengers: Endgame",
         posterImage = null,
         homePage = null,
-        id = null,
         providerId = "TMDB",
-        year = 2019
+        releaseDate = 1546300800000L // 2019-01-01
     )
 
     @Before
@@ -51,8 +51,7 @@ class NsbxUnitTest {
     fun `test NSBX Api`() = runTest {
         val links = mutableListOf<MediaLink>()
         api.getLinks(
-            watchId = movie.identifier,
-            film = movie,
+            media = movie,
             onLinkFound = links::add
         )
 

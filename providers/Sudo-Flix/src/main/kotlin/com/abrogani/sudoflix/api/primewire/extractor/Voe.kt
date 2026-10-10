@@ -5,7 +5,7 @@ import com.flixclusive.core.util.network.Crypto
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import okhttp3.OkHttpClient
 
 internal class Voe(

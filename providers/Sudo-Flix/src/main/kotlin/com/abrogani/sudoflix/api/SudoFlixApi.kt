@@ -7,75 +7,49 @@ import com.abrogani.sudoflix.api.ridomovies.RidoMoviesApi
 import com.abrogani.sudoflix.api.vidsrcto.VidSrcToApi
 import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.exception.safeCall
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.SearchResponseData
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.model.film.util.FilmType
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.common.MediaIdSource
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.tv.Episode
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
-import com.flixclusive.provider.filter.FilterList
+import com.flixclusive.provider.capability.CrossMatchProviderApi
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
 import okhttp3.OkHttpClient
 
 /**
  *
  * RIP m-w
+ *
+ * This is a set of providers combined into one. It has no catalog of its own: every source
+ * resolves links straight from the TMDB/IMDb ids of the media it is handed.
  * */
 class SudoFlixApi(
     client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
+    private val providerId: String
+) : MediaLinkProviderApi, CrossMatchProviderApi {
     private val providersList = listOf(
-        NsbxApi(
-            client = client,
-            provider = provider
-        ),
-        VidBingeApi(
-            client = client,
-            provider = provider
-        ),
-        RidoMoviesApi(
-            client = client,
-            provider = provider
-        ),
-        PrimeWireApi(
-            client = client,
-            provider = provider
-        ),
-        VidSrcToApi(
-            client = client,
-            provider = provider
-        ),
+        NsbxApi(client),
+        VidBingeApi(client),
+        RidoMoviesApi(client),
+        PrimeWireApi(client),
+        VidSrcToApi(client),
     )
 
-    override val testFilm: FilmMetadata
-        get() = Movie(
-            tmdbId = 299534,
-            imdbId = "tt4154796",
-            title = "Avengers: Endgame",
-            posterImage = null,
-            backdropImage = "/orjiB3oUIsyz60hoEqkiGpy5CeO.jpg",
-            homePage = null,
-            id = null,
-            providerId = "TMDB"
-        )
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
         providersList.mapAsync {
             safeCall {
                 it.getLinks(
-                    watchId = watchId,
-                    film = film,
+                    media = media,
                     episode = episode,
                     onLinkFound = onLinkFound
                 )
@@ -83,31 +57,26 @@ class SudoFlixApi(
         }
     }
 
-    override suspend fun search(
-        title: String,
-        page: Int,
-        id: String?,
-        imdbId: String?,
-        tmdbId: Int?,
-        filters: FilterList,
-    ): SearchResponseData<FilmSearchItem> {
-        val identifier = id ?: tmdbId?.toString() ?: imdbId
-        if (identifier == null) {
-            throw IllegalStateException("${provider.name} is not a searchable provider. It is a set of providers combined into one.")
+    // Nothing to look up: the sources are keyed by the ids the media already carries.
+    override suspend fun getById(
+        mediaType: MediaType,
+        sourceIds: Map<MediaIdSource, String>,
+    ): MediaMetadata? = null
+
+    override suspend fun getByFuzzy(media: MediaMetadata): MediaMetadata? {
+        if (media.tmdbId == null && media.imdbId == null) {
+            return null
         }
 
-        return SearchResponseData(
-            results = listOf(
-                FilmSearchItem(
-                    id = identifier,
-                    title = title,
-                    providerId = provider.name,
-                    filmType = FilmType.MOVIE,
-                    posterImage = null,
-                    backdropImage = null,
-                    homePage = null
-                )
-            )
+        return PartialMedia(
+            type = media.type,
+            id = media.tmdbId ?: media.imdbId!!,
+            title = media.title,
+            providerId = providerId,
+            posterImage = media.posterImage,
+            backdropImage = media.backdropImage,
+            releaseDate = media.releaseDate,
+            externalIds = media.externalIds,
         )
     }
 }

@@ -2,48 +2,49 @@ package com.abrogani.sudoflix.api.vidsrcto
 
 import com.flixclusive.core.util.coroutines.asyncCalls
 import com.flixclusive.core.util.network.jsoup.asJsoup
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Subtitle
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.tv.Episode
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import com.abrogani.sudoflix.api.vidsrcto.dto.EmbedSourcesResponse
 import com.abrogani.sudoflix.api.vidsrcto.dto.SourcesListResponse
 import com.abrogani.sudoflix.api.vidsrcto.extractor.Filemoon
 import com.abrogani.sudoflix.api.vidsrcto.util.VidSrcToDecryptionUtil.decodeUrl
+import com.abrogani.sudoflix.api.util.urlType
 import okhttp3.OkHttpClient
 
 internal const val VIDSRCTO_KEY = "WXrUARXb1aDLaZjI"
 
 internal class VidSrcToApi(
-    client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
+    private val client: OkHttpClient
+) : MediaLinkProviderApi {
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
+
     private val name = "VidSrc.To"
-    override val baseUrl = "https://vidsrc.to"
+    private val baseUrl = "https://vidsrc.to"
 
     private val extractors = mapOf(
         "filemoon" to Filemoon(client),
     )
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        val actualWatchId = film.imdbId ?: film.tmdbId ?: watchId
+        val actualWatchId = media.imdbId ?: media.tmdbId ?: media.id
         val episodeSlug = if (episode != null) "/${episode.season}/${episode.number}" else ""
 
         val dataId = client.request(
-            url = "$baseUrl/embed/${film.filmType.type}/$actualWatchId$episodeSlug"
+            url = "$baseUrl/embed/${media.urlType}/$actualWatchId$episodeSlug"
         ).execute()
             .asJsoup()
             .selectFirst("ul.episodes li a")

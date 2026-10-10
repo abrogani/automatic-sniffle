@@ -1,14 +1,11 @@
 package com.abrogani.sudoflix.api.nsbx
 
-import com.flixclusive.provider.Provider
 import okhttp3.OkHttpClient
 
 internal class NsbxApi(
-    client: OkHttpClient,
-    provider: Provider
+    client: OkHttpClient
 ) : AbstractNsbxApi(
-    client = client,
-    provider = provider
+    client = client
 ) {
     override val baseUrl = "https://api.nsbx.ru"
     override val name = "NSBX"

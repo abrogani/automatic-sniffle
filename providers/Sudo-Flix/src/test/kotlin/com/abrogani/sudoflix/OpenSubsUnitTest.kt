@@ -1,6 +1,6 @@
 package com.abrogani.sudoflix
 
-import com.flixclusive.core.util.network.ignoreAllSSLErrors
+import com.flixclusive.core.util.network.okhttp.ignoreAllSSLErrors
 import com.abrogani.sudoflix.api.opensubs.SubtitleUtil.fetchSubtitles
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient

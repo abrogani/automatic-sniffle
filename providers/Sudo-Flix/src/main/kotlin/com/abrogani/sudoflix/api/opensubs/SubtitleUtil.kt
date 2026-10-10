@@ -1,7 +1,7 @@
 package com.abrogani.sudoflix.api.opensubs
 
 import com.flixclusive.core.util.exception.safeCall
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.model.provider.link.SubtitleSource

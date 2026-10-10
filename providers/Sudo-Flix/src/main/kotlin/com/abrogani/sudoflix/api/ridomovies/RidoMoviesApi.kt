@@ -1,13 +1,15 @@
 package com.abrogani.sudoflix.api.ridomovies
 
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.tv.Episode
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
 import com.abrogani.sudoflix.api.ridomovies.RidoMoviesConstant.RIDO_MOVIES_BASE_URL
 import com.abrogani.sudoflix.api.ridomovies.dto.RidoMoviesEmbedDto
 import com.abrogani.sudoflix.api.ridomovies.dto.RidoMoviesSearchDto
@@ -17,31 +19,28 @@ import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 
 class RidoMoviesApi(
-    client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
+    private val client: OkHttpClient
+) : MediaLinkProviderApi {
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
+
     private val name = "RidoMovies"
-    override val baseUrl  = RIDO_MOVIES_BASE_URL
+    private val baseUrl  = RIDO_MOVIES_BASE_URL
 
     private val closeLoad = CloseLoad(client)
     private val ridoo = Ridoo(client)
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
         val fullSlug = getFullSlug(
-            imdbId = film.imdbId ?: film.title,
-            tmdbId = film.tmdbId
+            imdbId = media.imdbId ?: media.title,
+            tmdbId = media.tmdbId
         )
 
         val episodeId: String
-        val iframeSourceUrl = if (film.filmType == FilmType.TV_SHOW) {
+        val iframeSourceUrl = if (media.isShow) {
             episodeId = getEpisodeId(
                 fullSlug = fullSlug,
                 season = episode!!.season,
@@ -71,7 +70,7 @@ class RidoMoviesApi(
 
     private fun getFullSlug(
         imdbId: String,
-        tmdbId: Int?,
+        tmdbId: String?,
     ): String {
         val initialResponse = client.request(
             url = "$baseUrl/core/api/search?q=$imdbId"
@@ -92,7 +91,7 @@ class RidoMoviesApi(
         }
 
         initialResponse.data.items.forEach {
-            if (it.contentTable.tmdbId == tmdbId || it.contentTable.imdbId == imdbId) {
+            if (it.contentTable.tmdbId.toString() == tmdbId || it.contentTable.imdbId == imdbId) {
                 return it.fullSlug
             }
         }

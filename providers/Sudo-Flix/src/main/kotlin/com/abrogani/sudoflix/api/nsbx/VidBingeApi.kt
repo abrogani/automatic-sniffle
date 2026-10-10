@@ -1,26 +1,25 @@
 package com.abrogani.sudoflix.api.nsbx
 
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.provider.Provider
+import com.abrogani.sudoflix.api.util.year
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
 import okhttp3.OkHttpClient
 
 internal class VidBingeApi(
-    client: OkHttpClient,
-    provider: Provider
+    client: OkHttpClient
 ) : AbstractNsbxApi(
-    client = client,
-    provider = provider
+    client = client
 ) {
     override val baseUrl = "https://api.whvx.net"
     override val name = "VidBinge"
     override val streamSourceUrl = "$baseUrl/source"
 
-    override fun FilmMetadata.getQuery(
+    override fun MediaMetadata.getQuery(
         season: Int?,
         episode: Int?
     ): String {
-        val filmType = if (season != null) "show" else FilmType.MOVIE.type
+        val filmType = if (season != null) "show" else "movie"
 
         var query = """
             {"title":"$title","releaseYear":${year},"tmdbId":"$tmdbId","imdbId":"$imdbId","type":"$filmType"

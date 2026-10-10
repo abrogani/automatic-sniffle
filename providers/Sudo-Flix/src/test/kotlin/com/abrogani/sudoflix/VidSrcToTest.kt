@@ -3,10 +3,10 @@ package com.abrogani.sudoflix
 import android.util.Base64
 import com.flixclusive.core.util.log.LogRule
 import com.flixclusive.core.util.log.debugLog
-import com.flixclusive.model.film.DEFAULT_FILM_SOURCE_NAME
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.TvShow
-import com.flixclusive.model.film.common.tv.Episode
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.MediaIdSource
+import com.flixclusive.model.media.common.tv.Episode
 import com.flixclusive.model.provider.link.MediaLink
 import com.abrogani.sudoflix.api.vidsrcto.VidSrcToApi
 import com.abrogani.sudoflix.api.vidsrcto.extractor.F2Cloud
@@ -36,39 +36,42 @@ class VidSrcToTest {
     }
 
     private val movie = Movie(
-        tmdbId = 299534,
-        imdbId = "tt4154796",
+        id = "299534",
+        externalIds = mapOf(
+            MediaIdSource.TMDB to "299534",
+            MediaIdSource.IMDB to "tt4154796",
+        ),
         title = "Avengers: Endgame",
         posterImage = null,
         backdropImage = "/orjiB3oUIsyz60hoEqkiGpy5CeO.jpg",
         homePage = null,
-        id = null,
-        providerId = DEFAULT_FILM_SOURCE_NAME
+        providerId = "TMDB"
     )
 
-    private val tvShow = TvShow(
-        tmdbId = 94605,
-        imdbId = "tt11126994",
+    private val tvShow = Show(
+        id = "94605",
+        externalIds = mapOf(
+            MediaIdSource.TMDB to "94605",
+            MediaIdSource.IMDB to "tt11126994",
+        ),
         title = "Arcane",
         posterImage = null,
         homePage = null,
-        id = null,
-        providerId = "TMDB"
+        providerId = "TMDB",
+        seasons = emptyList(),
+        totalSeasons = 2,
+        totalEpisodes = 18
     )
 
     @Test
     fun `VidSrcToApi test`() = runTest {
-        val api = VidSrcToApi(
-            OkHttpClient(),
-            SudoFlix()
-        )
+        val api = VidSrcToApi(OkHttpClient())
 
         val links = mutableListOf<MediaLink>()
 
         api.getLinks(
-            watchId = tvShow.identifier,
-            film = tvShow,
-            episode = Episode(number = 1, season = 1),
+            media = tvShow,
+            episode = Episode(id = "1", number = 1, season = 1, isReleased = true),
             onLinkFound = links::add
         )
 

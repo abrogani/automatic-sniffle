@@ -3,39 +3,39 @@ package com.abrogani.sudoflix.api.nsbx
 import android.net.Uri
 import com.flixclusive.core.util.coroutines.asyncCalls
 import com.flixclusive.core.util.coroutines.mapAsync
-import com.flixclusive.model.film.util.FilmType
 import com.flixclusive.core.util.log.errorLog
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.sudoflix.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.Flag
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.model.provider.link.SubtitleSource
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
+import com.abrogani.sudoflix.api.util.year
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.tv.Episode
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
 import com.abrogani.sudoflix.api.nsbx.dto.NsbxProviders
 import com.abrogani.sudoflix.api.nsbx.dto.NsbxSource
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 
 internal abstract class AbstractNsbxApi(
-    client: OkHttpClient,
-    provider: Provider,
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
+    private val client: OkHttpClient,
+) : MediaLinkProviderApi {
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
+
+    protected abstract val baseUrl: String
     abstract val streamSourceUrl: String
     abstract val name: String
     private val origin = "https://sudo-flix.lol"
     private val headers = mapOf("Origin" to origin).toHeaders()
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
@@ -47,7 +47,7 @@ internal abstract class AbstractNsbxApi(
         for (i in availableProviders.indices) {
             try {
                 val provider = availableProviders[i]
-                val query = film.getQuery(
+                val query = media.getQuery(
                     season = episode?.season,
                     episode = episode?.number
                 )
@@ -151,11 +151,11 @@ internal abstract class AbstractNsbxApi(
         return fromJson<NsbxProviders>(response).providers
     }
 
-    protected open fun FilmMetadata.getQuery(
+    protected open fun MediaMetadata.getQuery(
         season: Int?,
         episode: Int?
     ): String {
-        val filmType = if (season != null) "show" else FilmType.MOVIE.type
+        val filmType = if (season != null) "show" else "movie"
 
         return """
             {"title":"$title","releaseYear":${year},"tmdbId":"$tmdbId","imdbId":"$imdbId","type":"$filmType","season":"${season ?: ""}","episode":"${episode ?: ""}"}

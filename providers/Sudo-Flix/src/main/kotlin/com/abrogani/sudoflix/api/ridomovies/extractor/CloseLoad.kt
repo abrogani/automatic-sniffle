@@ -11,7 +11,7 @@ import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.model.provider.link.SubtitleSource
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 

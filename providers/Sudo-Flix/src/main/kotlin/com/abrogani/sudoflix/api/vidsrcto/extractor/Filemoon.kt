@@ -1,7 +1,7 @@
 package com.abrogani.sudoflix.api.vidsrcto.extractor
 
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.extractor.EmbedExtractor
+import com.abrogani.sudoflix.api.util.EmbedExtractor
 import com.abrogani.sudoflix.api.util.ExtractorHelper.unpackLink
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
