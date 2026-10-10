@@ -42,7 +42,6 @@ include(
     "StreamPlay",
     "SuperStream",
     "FlixHQ",
-    "Sudo-Flix",
     "LookMovie",
 )
 

@@ -6,7 +6,6 @@
 | FlixHQ | 🔴 DOWN |
 | SuperStream | 🟢 OK |
 | LookMovie | 🔵 BETA |
-| Sudo-Flix | 🟢 OK |
 | Stremio | 🟢 OK |
 | StreamPlay | 🟢 OK |
 | CodeStream | 🟢 OK |
