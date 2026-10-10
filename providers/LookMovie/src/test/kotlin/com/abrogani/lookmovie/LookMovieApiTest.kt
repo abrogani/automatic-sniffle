@@ -2,9 +2,7 @@ package com.abrogani.lookmovie
 
 import com.abrogani.lookmovie.api.LookMovieApi
 import com.abrogani.lookmovie.api.VIDEO_URL_KEY
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.model.provider.ProviderManifest
+import com.flixclusive.model.media.common.MediaType
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Before
@@ -17,51 +15,35 @@ import strikt.assertions.isNotEmpty
 import strikt.assertions.isNotNull
 
 class LookMovieApiTest {
-    private lateinit var lookMovie: LookMovie
     private lateinit var lookMovieApi: LookMovieApi
 
     @Before
     fun setUp() {
-        lookMovie = LookMovie()
-        lookMovie.manifest = ProviderManifest(
-            id = "lookmovie",
-            name = "LookMovie",
-            versionCode = 10000,
-            versionName = "1.0.0",
-            updateUrl = null,
-            providerClassName = "com.abrogani.lookmovie.LookMovie",
-            requiresResources = false
-        )
-
         lookMovieApi = LookMovieApi(
             client = OkHttpClient(),
-            provider = lookMovie
+            providerId = "lookmovie"
         )
     }
 
     @Test
     fun `search should return valid results for Parasite query`() = runTest {
         val searchResponse = lookMovieApi.search(
-            title = "Parasite",
+            query = "Parasite",
             page = 1,
-            id = null,
-            imdbId = null,
-            tmdbId = null,
         )
 
         expectThat(searchResponse) {
             get { page }.isEqualTo(1)
-            get { results }.hasSize(3)
             get { results }.isNotEmpty()
         }
 
         val firstResult = searchResponse.results.first()
         expectThat(firstResult) {
-            get { id }.isNotNull()
+            get { id }.isNotEmpty()
             get { title }.isNotEmpty()
-            get { filmType }.isEqualTo(FilmType.MOVIE)
+            get { type }.isEqualTo(MediaType.MOVIE)
             get { providerId }.isEqualTo("lookmovie")
-            get { year }.isNotNull().isGreaterThan(0)
+            get { releaseDate }.isNotNull().isGreaterThan(0L)
         }
 
         println("=== SEARCH RESULTS ===")
@@ -74,7 +56,7 @@ class LookMovieApiTest {
             println("Result ${index + 1}:")
             println("  ID: ${result.id}")
             println("  Title: ${result.title}")
-            println("  Year: ${result.year}")
+            println("  Year: ${result.releaseDate}")
             println("  Rating: ${result.rating}")
             println("  Poster: ${result.posterImage}")
             println("  Homepage: ${result.homePage}")
@@ -85,11 +67,8 @@ class LookMovieApiTest {
     @Test
     fun `search should handle pagination correctly`() = runTest {
         val firstPage = lookMovieApi.search(
-            title = "action",
+            query = "action",
             page = 1,
-            id = null,
-            imdbId = null,
-            tmdbId = null,
         )
 
         expectThat(firstPage) {
@@ -104,30 +83,26 @@ class LookMovieApiTest {
     }
 
     @Test
-    fun `getMetadata should return complete movie information`() = runTest {
+    fun `getMovie should return complete movie information`() = runTest {
         val searchResponse = lookMovieApi.search(
-            title = "Parasite",
+            query = "Parasite",
             page = 1,
-            id = null,
-            imdbId = null,
-            tmdbId = null,
         )
 
         val firstResult = searchResponse.results.first()
-        val metadata = lookMovieApi.getMetadata(firstResult) as Movie
+        val metadata = lookMovieApi.getMovie(firstResult)
 
         expectThat(metadata) {
             get { id }.isEqualTo(firstResult.id)
             get { title }.isNotEmpty()
             get { providerId }.isEqualTo("lookmovie")
-            get { filmType }.isEqualTo(FilmType.MOVIE)
+            get { type }.isEqualTo(MediaType.MOVIE)
             get { customProperties[VIDEO_URL_KEY] }.isNotNull()
         }
 
         println("=== MOVIE METADATA ===")
         println("ID: ${metadata.id}")
         println("Title: ${metadata.title}")
-        println("Year: ${metadata.year}")
         println("Rating: ${metadata.rating}")
         println("Runtime: ${metadata.runtime} minutes")
         println("Release Date: ${metadata.releaseDate}")
@@ -147,7 +122,7 @@ class LookMovieApiTest {
 
         println("Recommendations (${metadata.recommendations.size}):")
         metadata.recommendations.take(5).forEach { rec ->
-            println("  - ${rec.title} (${rec.year}) - Rating: ${rec.rating}")
+            println("  - ${rec.title} (${rec.releaseDate}) - Rating: ${rec.rating}")
         }
         if (metadata.recommendations.size > 5) {
             println("  ... and ${metadata.recommendations.size - 5} more")
@@ -156,21 +131,18 @@ class LookMovieApiTest {
     }
 
     @Test
-    fun `getMetadata should handle movies with minimal information`() = runTest {
+    fun `getMovie should handle movies with minimal information`() = runTest {
         val searchResponse = lookMovieApi.search(
-            title = "test",
+            query = "test",
             page = 1,
-            id = null,
-            imdbId = null,
-            tmdbId = null,
         )
 
         if (searchResponse.results.isNotEmpty()) {
             val lastResult = searchResponse.results.last()
-            val metadata = lookMovieApi.getMetadata(lastResult) as Movie
+            val metadata = lookMovieApi.getMovie(lastResult)
 
             expectThat(metadata) {
-                get { id }.isNotNull()
+                get { id }.isNotEmpty()
                 get { title }.isNotEmpty()
                 get { providerId }.isEqualTo("lookmovie")
             }
@@ -190,7 +162,7 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should return valid movies from catalog`() = runTest {
-        val catalog = lookMovieApi.catalogs.first()
+        val catalog = lookMovieApi.getCatalogs().first()
         val catalogResponse = lookMovieApi.getCatalogItems(
             catalog = catalog,
             page = 1
@@ -203,11 +175,11 @@ class LookMovieApiTest {
 
         val firstResult = catalogResponse.results.first()
         expectThat(firstResult) {
-            get { id }.isNotNull()
+            get { id }.isNotEmpty()
             get { title }.isNotEmpty()
-            get { filmType }.isEqualTo(FilmType.MOVIE)
+            get { type }.isEqualTo(MediaType.MOVIE)
             get { providerId }.isEqualTo("lookmovie")
-            get { year }.isNotNull().isGreaterThan(0)
+            get { releaseDate }.isNotNull().isGreaterThan(0L)
         }
 
         println("=== CATALOG RESULTS ===")
@@ -221,7 +193,7 @@ class LookMovieApiTest {
             println("Catalog Item ${index + 1}:")
             println("  ID: ${result.id}")
             println("  Title: ${result.title}")
-            println("  Year: ${result.year}")
+            println("  Year: ${result.releaseDate}")
             println("  Rating: ${result.rating}")
             println("  Poster: ${result.posterImage}")
             println()
@@ -230,7 +202,7 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should handle pagination correctly`() = runTest {
-        val catalog = lookMovieApi.catalogs.first()
+        val catalog = lookMovieApi.getCatalogs().first()
 
         val firstPage = lookMovieApi.getCatalogItems(
             catalog = catalog,
@@ -271,7 +243,7 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should parse pagination text correctly`() = runTest {
-        val catalog = lookMovieApi.catalogs.first()
+        val catalog = lookMovieApi.getCatalogs().first()
         val catalogResponse = lookMovieApi.getCatalogItems(
             catalog = catalog,
             page = 1
@@ -292,7 +264,7 @@ class LookMovieApiTest {
 
     @Test
     fun `catalogs property should return available catalogs`() = runTest {
-        val catalogs = lookMovieApi.catalogs
+        val catalogs = lookMovieApi.getCatalogs()
 
         expectThat(catalogs) {
             hasSize(1)

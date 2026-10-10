@@ -1,14 +1,14 @@
 package com.abrogani.lookmovie.extensions
 
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.util.FilmType
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.common.MediaType
 import org.jsoup.nodes.Element
 
-internal fun Element.toFilmSearchItem(
+internal fun Element.toPartialMedia(
     baseUrl: String,
     providerId: String,
-    filmType: FilmType
-): FilmSearchItem {
+    type: MediaType
+): PartialMedia {
     val hrefLink = select("div.hvr-inner a").attr("href").takeIf { it.isNotEmpty() }
         ?: select("a").first()?.attr("href") ?: ""
 
@@ -19,16 +19,16 @@ internal fun Element.toFilmSearchItem(
     val posterUrl = select("div.image__placeholder a img").attr("data-src").takeIf { it.isNotEmpty() }
         ?: select("p.item__image").attr("data-background-image")
 
-    val rating = select("p.rate span").text().toDoubleOrNull() ?: 0.0
-    val year = select("p.year").text().toIntOrNull() ?: 0
+    val rating = select("p.rate span").text().toDoubleOrNull()
+    val year = select("p.year").text().toIntOrNull()
 
-    return FilmSearchItem(
+    return PartialMedia(
         id = id,
         title = title,
         posterImage = if (posterUrl.isNotEmpty()) baseUrl + posterUrl else null,
         rating = rating,
-        year = year,
-        filmType = filmType,
+        releaseDate = year?.toReleaseDate(),
+        type = type,
         providerId = providerId,
         homePage = baseUrl + hrefLink,
     )

@@ -1,18 +1,20 @@
 package com.abrogani.lookmovie.api
 
 import com.abrogani.lookmovie.extensions.removeAccents
-import com.abrogani.lookmovie.extensions.toFilmSearchItem
+import com.abrogani.lookmovie.extensions.toPartialMedia
+import com.abrogani.lookmovie.extensions.toReleaseDate
 import com.flixclusive.core.util.network.okhttp.request
-import com.flixclusive.model.film.Film
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.Genre
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.SearchResponseData
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.model.provider.ProviderCatalog
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.Genre
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.PaginatedMedia
+import com.flixclusive.model.media.common.tv.Season
+import com.flixclusive.model.provider.Catalog
+import com.flixclusive.provider.capability.CatalogProviderApi
+import com.flixclusive.provider.capability.MediaMetadataProviderApi
+import com.flixclusive.provider.capability.SearchProviderApi
 import com.flixclusive.provider.filter.FilterList
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
@@ -24,62 +26,45 @@ internal const val VIDEO_URL_KEY = "videoUrl"
  * For LookMovie WebView API integration and testing purposes.
  * */
 class LookMovieApi(
-    client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(
-    client = client,
-    provider = provider
-) {
-    override val baseUrl: String = "https://www.lookmovie2.to"
-    override val testFilm: FilmMetadata = Movie(
-        id = "6751668-parasite-2019",
-        title = "Parasite",
-        posterImage = "$baseUrl/images/p/w500/ac2cdc696393461180f2ca831e217e24.webp",
-        homePage = "$baseUrl/movies/view/6751668-parasite-2019",
-        providerId = provider.manifest.id,
-        year = 2019,
-        genres = listOf(Genre(id = -1, name = "Drama")),
-        customProperties = mapOf(
-            VIDEO_URL_KEY to "$baseUrl/movies/play/1696508424-parasite-2019"
+    val client: OkHttpClient,
+    private val providerId: String
+) : CatalogProviderApi, SearchProviderApi, MediaMetadataProviderApi {
+    val baseUrl: String = "https://www.lookmovie2.to"
+
+    override val filters: FilterList = FilterList()
+
+    override suspend fun getCatalogs(): List<Catalog> = listOf(
+        Catalog(
+            name = "Latest Movies",
+            url = "$baseUrl/movies",
+            canPaginate = true,
+            image = "https://i.imgur.com/JhbAqBt.png",
+            providerId = providerId
         )
     )
 
-    override val catalogs: List<ProviderCatalog>
-        get() = listOf(
-            ProviderCatalog(
-                name = "Latest Movies",
-                url = "$baseUrl/movies",
-                canPaginate = true,
-                image = "https://i.imgur.com/JhbAqBt.png",
-                providerId = provider.manifest.id
-            )
-        )
-
     override suspend fun search(
-        title: String,
+        query: String,
         page: Int,
-        id: String?,
-        imdbId: String?,
-        tmdbId: Int?,
         filters: FilterList,
-    ): SearchResponseData<FilmSearchItem> {
-        val query = title.removeAccents()
+    ): PaginatedMedia<PartialMedia> {
+        val query = query.removeAccents()
 
         val data = client.request(
             url = "${baseUrl}/movies/search/?q=$query&page=$page"
         ).execute().body.string()
 
-        val results = mutableListOf<FilmSearchItem>()
+        val results = mutableListOf<PartialMedia>()
 
         val document = Jsoup.parse(data)
         val movieElements = document.select("div.flex-wrap-movielist div.movie-item-style-1")
 
         if (movieElements.isNotEmpty()) {
             movieElements.forEach { element ->
-                val item = element.toFilmSearchItem(
-                    providerId = provider.manifest.id,
+                val item = element.toPartialMedia(
+                    providerId = providerId,
                     baseUrl = baseUrl,
-                    filmType = FilmType.MOVIE // TODO(support TV shows in the future?)
+                    type = MediaType.MOVIE // TODO(support TV shows in the future?)
                 )
 
                 results.add(item)
@@ -97,28 +82,29 @@ class LookMovieApi(
             false
         }
 
-        return SearchResponseData(
+        return PaginatedMedia(
             page = page,
             hasNextPage = hasNextPage,
             results = results
         )
     }
 
-    override suspend fun getMetadata(film: Film): FilmMetadata {
-        // TODO("Implement support for TV shows")
-        if (film.filmType == FilmType.TV_SHOW) {
-            throw IllegalStateException("This provide does not support TV shows YET!")
-        }
+    // TODO(Implement support for TV shows)
+    override suspend fun getShow(media: PartialMedia): Show =
+        throw UnsupportedOperationException("This provider does not support TV shows YET!")
 
+    override suspend fun getSeason(show: Show, season: Season.Partial): Season.Full? = null
+
+    override suspend fun getMovie(media: PartialMedia): Movie {
         val data = client.request(
-            url = "$baseUrl/movies/view/${film.id}"
+            url = "$baseUrl/movies/view/${media.id}"
         ).execute().body.string()
 
         val document = Jsoup.parse(data)
 
         // Extract basic movie information
         val titleElement = document.select("h1.bd-hd").first()
-        val title = titleElement?.text()?.substringBefore(" ")?.trim() ?: film.title
+        val title = titleElement?.text()?.substringBefore(" ")?.trim() ?: media.title
         val year = titleElement?.select("span")?.text()?.toIntOrNull()
 
         // Extract rating
@@ -143,7 +129,7 @@ class LookMovieApi(
         val genresText = document.select("div.genres span").getOrNull(1)?.text() ?: ""
         val genres = genresText.split(",")
             .drop(1) // Skip the year
-            .map { Genre(id = -1, name = it.trim()) }
+            .map { Genre(name = it.trim()) }
             .filter { it.name.isNotEmpty() }
 
         // Extract video URL for WebView captcha flow
@@ -151,30 +137,29 @@ class LookMovieApi(
         val videoUrl = if (playLink.isNotEmpty()) baseUrl + playLink else null
 
         // Extract recommendations
-        val recommendations = mutableListOf<FilmSearchItem>()
+        val recommendations = mutableListOf<PartialMedia>()
         document.select("div.may-also-like div.movie-item").forEach { recommendationElement ->
             runCatching {
-                val recommendation = recommendationElement.toFilmSearchItem(
+                val recommendation = recommendationElement.toPartialMedia(
                     baseUrl = baseUrl,
-                    providerId = provider.manifest.id,
-                    filmType = FilmType.MOVIE
+                    providerId = providerId,
+                    type = MediaType.MOVIE
                 )
                 recommendations.add(recommendation)
             }
         }
 
         return Movie(
-            id = film.id,
+            id = media.id,
             title = title,
             posterImage = posterImage,
-            homePage = film.homePage,
+            homePage = media.homePage,
             backdropImage = backdropImage,
-            releaseDate = year?.toString(),
+            releaseDate = year?.toReleaseDate(),
             rating = rating,
-            providerId = provider.manifest.id,
+            providerId = providerId,
             runtime = runtime,
             overview = overview,
-            year = year,
             genres = genres,
             recommendations = recommendations,
             customProperties = mapOf(
@@ -184,24 +169,24 @@ class LookMovieApi(
     }
 
     override suspend fun getCatalogItems(
-        catalog: ProviderCatalog,
+        catalog: Catalog,
         page: Int
-    ): SearchResponseData<FilmSearchItem> {
+    ): PaginatedMedia<PartialMedia> {
         val data = client.request(
             url = "${baseUrl}/movies/page/$page"
         ).execute().body.string()
 
-        val results = mutableListOf<FilmSearchItem>()
+        val results = mutableListOf<PartialMedia>()
 
         val document = Jsoup.parse(data)
         val movieElements = document.select("div.flex-wrap-movielist div.movie-item-style-1")
 
         if (movieElements.isNotEmpty()) {
             movieElements.forEach { element ->
-                val item = element.toFilmSearchItem(
-                    providerId = provider.manifest.id,
+                val item = element.toPartialMedia(
+                    providerId = providerId,
                     baseUrl = baseUrl,
-                    filmType = FilmType.MOVIE // TODO(support TV shows in the future?)
+                    type = MediaType.MOVIE // TODO(support TV shows in the future?)
                 )
 
                 results.add(item)
@@ -224,7 +209,7 @@ class LookMovieApi(
             false
         }
 
-        return SearchResponseData(
+        return PaginatedMedia(
             page = page,
             hasNextPage = hasNextPage,
             results = results

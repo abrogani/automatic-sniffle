@@ -94,8 +94,11 @@ subprojects {
 
         // ============= START: FOR TESTING ===============
         testImplementation(rootProject.libs.core.stubs.provider)
+        testImplementation(platform(rootProject.libs.compose.bom))
+        testImplementation(rootProject.libs.compose.runtime) // Compose compiler plugin needs it on the test classpath
         testImplementation(rootProject.libs.okhttp)
         testImplementation(rootProject.libs.gson)
+        testImplementation(rootProject.libs.kotlinx.serialization.json)
         testImplementation(rootProject.libs.jsoup)
         testImplementation(rootProject.libs.kotlinx.coroutines.test)
         testImplementation(rootProject.libs.junit)
