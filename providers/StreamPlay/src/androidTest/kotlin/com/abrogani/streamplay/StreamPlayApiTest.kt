@@ -8,9 +8,9 @@ import com.abrogani.streamplay.loader.PluginIndex
 import com.abrogani.streamplay.loader.RemotePlugin
 import com.abrogani.streamplay.settings.BAD_VERSION_KEY
 import com.flixclusive.model.media.Movie
+import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.CryptographyProviderApi
 import dev.whyoleg.cryptography.CryptographyProviderContainer
-import dev.whyoleg.cryptography.CryptographySystem
 import dev.whyoleg.cryptography.algorithms.SHA256
 import com.flixclusive.model.media.common.MediaIdSource
 import com.flixclusive.model.provider.link.MediaLink
@@ -111,19 +111,52 @@ class StreamPlayApiTest {
         assertTrue("CloudStream context not set", holder is android.content.Context)
     }
 
-    @OptIn(CryptographyProviderApi::class)
     @Test
-    fun jdkCryptographyProviderWorksOnDevice() = runBlocking {
+    fun defaultCryptographyProviderIsAvailableAfterLoad() = runBlocking {
         loader.load(context)
 
-        val container = Class.forName("dev.whyoleg.cryptography.providers.jdk.JdkCryptographyProviderContainer")
-            .getDeclaredConstructor()
-            .newInstance() as CryptographyProviderContainer
-        val digest = container.provider.value.get(SHA256).hasher().hashBlocking("a".encodeToByteArray())
+        val digest = CryptographyProvider.Default.get(SHA256).hasher().hashBlocking("a".encodeToByteArray())
 
         assertEquals(32, digest.size)
-        assertTrue(CryptographySystem.getRegisteredProviders().isNotEmpty())
     }
+
+    @OptIn(CryptographyProviderApi::class)
+    @Test
+    fun registeringBeforeReadingProvidersMakesTheDefaultAvailable() {
+        val system = newCryptographySystem()
+        register(system)
+
+        val provider = system.javaClass.getMethod("getDefaultProvider").invoke(system) as CryptographyProvider
+        val digest = provider.get(SHA256).hasher().hashBlocking("a".encodeToByteArray())
+        assertEquals(32, digest.size)
+    }
+
+    @Test
+    fun registeringAfterReadingProvidersIsRefused() {
+        val system = newCryptographySystem()
+        system.javaClass.getMethod("getRegisteredProviders").invoke(system)
+
+        val error = assertThrows(java.lang.reflect.InvocationTargetException::class.java) { register(system) }
+        assertTrue(error.cause is IllegalStateException)
+    }
+
+    private fun newCryptographySystem(): Any =
+        Class.forName("dev.whyoleg.cryptography.CryptographySystemImpl")
+            .getDeclaredConstructor()
+            .newInstance()
+
+    @OptIn(CryptographyProviderApi::class)
+    private fun register(system: Any) {
+        val container = jdkContainer()
+        system.javaClass.getMethod("registerProvider", Lazy::class.java, Int::class.javaPrimitiveType)
+            .invoke(system, container.provider, container.priority)
+    }
+
+    @OptIn(CryptographyProviderApi::class)
+    private fun jdkContainer() =
+        Class.forName("dev.whyoleg.cryptography.providers.jdk.JdkCryptographyProviderContainer")
+            .getDeclaredConstructor()
+            .newInstance() as CryptographyProviderContainer
 
     @Test
     fun updateSwapsTheFileAndReloads() = runBlocking {

@@ -36,6 +36,7 @@ import java.io.OutputStream
 import java.lang.ref.WeakReference
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipFile
 
 internal class Cs3PluginLoader(
@@ -293,12 +294,13 @@ internal class Cs3PluginLoader(
         }.onFailure { warnLog("[StreamPlay] Could not set CloudStreamApp.context: $it") }
     }
 
-    // The .flx build drops META-INF, so the library's ServiceLoader lookup finds nothing.
+    // The .flx build drops META-INF, so the library's ServiceLoader lookup finds nothing. Registering
+    // must happen before anything reads the registered providers, or the library refuses it.
     @OptIn(CryptographyProviderApi::class)
     private fun registerCryptographyProvider() {
-        runCatching {
-            if (CryptographySystem.getRegisteredProviders().isNotEmpty()) return
+        if (!cryptographyRegistered.compareAndSet(false, true)) return
 
+        runCatching {
             val container = Class.forName("dev.whyoleg.cryptography.providers.jdk.JdkCryptographyProviderContainer")
                 .getDeclaredConstructor()
                 .newInstance() as CryptographyProviderContainer
@@ -432,6 +434,7 @@ internal class Cs3PluginLoader(
         const val PREVIOUS_FILE_NAME = "StreamPlay.cs3.previous"
         const val MAX_PLUGIN_BYTES = 50L * 1024 * 1024
 
+        val cryptographyRegistered = AtomicBoolean(false)
         val mutex = Mutex()
         val downloadMutex = Mutex()
     }
