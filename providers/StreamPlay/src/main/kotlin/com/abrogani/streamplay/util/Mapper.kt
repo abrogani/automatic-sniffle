@@ -37,9 +37,9 @@ internal object Mapper {
                 Name: $name
             """.trimIndent(),
             url = url,
-            flags = setOf(
-                Flag.RequiresAuth(getAllHeaders())
-            )
+            flags = getAllHeaders()
+                .takeIf { it.isNotEmpty() }
+                ?.let { setOf(Flag.RequiresAuth(it)) }
         )
     }
 
