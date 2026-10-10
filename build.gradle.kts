@@ -125,6 +125,12 @@ subprojects {
             testImplementation(rootProject.libs.rhino.android)
 
             androidTestImplementation(files(csJar))
+            androidTestImplementation(rootProject.libs.core.stubs.provider)
+            androidTestImplementation(rootProject.libs.okhttp)
+            androidTestImplementation(rootProject.libs.gson)
+            androidTestImplementation(rootProject.libs.kotlinx.serialization.json)
+            androidTestImplementation(platform(rootProject.libs.compose.bom))
+            androidTestImplementation(rootProject.libs.compose.runtime)
             androidTestImplementation(rootProject.libs.mockk)
             androidTestImplementation(rootProject.libs.kotlinx.coroutines.test)
             androidTestImplementation(rootProject.libs.androidx.test.ext.junit)

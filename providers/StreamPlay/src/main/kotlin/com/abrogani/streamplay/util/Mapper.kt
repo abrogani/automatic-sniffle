@@ -1,9 +1,10 @@
 package com.abrogani.streamplay.util
 
-import com.flixclusive.core.util.exception.safeCall
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.TvShow
-import com.flixclusive.model.film.common.tv.Episode
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.MediaIdSource.Companion.imdbId
+import com.flixclusive.model.media.common.MediaIdSource.Companion.tmdbId
+import com.flixclusive.model.media.common.tv.Episode
 import com.flixclusive.model.provider.link.Flag
 import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
@@ -11,8 +12,9 @@ import com.google.gson.Gson
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.phisher98.StreamPlay
-import java.text.SimpleDateFormat
-import java.util.Locale
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 internal object Mapper {
     private val gson = Gson()
@@ -20,6 +22,7 @@ internal object Mapper {
     private const val JAPANESE_LANGUAGE_CODE = "ja"
     private const val HINDI_LANGUAGE_CODE = "hi"
     private const val KOREAN_LANGUAGE_CODE = "ko"
+    private const val ANIMATION_GENRE = "Animation"
 
     fun SubtitleFile.toSubtitle(): Subtitle {
         return Subtitle(
@@ -41,8 +44,8 @@ internal object Mapper {
         )
     }
 
-    fun FilmMetadata.toLinkDataString(episode: Episode? = null): String {
-        val hasAnimationGenre = genres.any { it.id == 16 }
+    fun MediaMetadata.toLinkDataString(episode: Episode? = null): String {
+        val hasAnimationGenre = genres.any { it.name.equals(ANIMATION_GENRE, ignoreCase = true) }
         val isChinese = language?.contains(CHINESE_LANGUAGE_CODE) == true
         val isJapanese = language?.contains(JAPANESE_LANGUAGE_CODE) == true
         val isKorean = language?.contains(KOREAN_LANGUAGE_CODE) == true
@@ -50,12 +53,12 @@ internal object Mapper {
 
         val reformattedReleaseDate = reformatDate(releaseDate)
         val episodeReleaseDate = reformatDate(episode?.releaseDate)
-        val lastSeason = if (episode != null) (this as TvShow).totalSeasons else null
+        val lastSeason = if (episode != null) (this as? Show)?.totalSeasons else null
 
         val linkData = StreamPlay.LinkData(
-            id = tmdbId,
+            id = tmdbId?.toIntOrNull(),
             title = title,
-            year = year,
+            year = releaseDate?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).year },
             season = episode?.season,
             episode = episode?.number,
             imdbId = imdbId,
@@ -73,15 +76,11 @@ internal object Mapper {
         return gson.toJson(linkData)
     }
 
-    private fun reformatDate(dateString: String?, locale: Locale = Locale.US): String {
-        if (dateString == null) return ""
+    private fun reformatDate(epochMillis: Long?): String {
+        if (epochMillis == null) return ""
 
-        val input = SimpleDateFormat("MMMM d, yyyy", locale)
-        val output = SimpleDateFormat("yyyy-MM-dd", locale)
-
-        return safeCall {
-            val date = input.parse(dateString)
-            output.format(date!!)
-        } ?: dateString
+        return DateTimeFormatter.ISO_LOCAL_DATE.format(
+            Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC)
+        )
     }
 }

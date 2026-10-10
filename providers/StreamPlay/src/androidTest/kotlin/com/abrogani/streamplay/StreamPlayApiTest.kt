@@ -1,37 +1,44 @@
 package com.abrogani.streamplay
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.common.MediaIdSource
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.ProviderApi
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StreamPlayApiTest {
-    private lateinit var api: ProviderApi
+    private lateinit var api: StreamPlayApi
+
+    private val testMovie = Movie(
+        id = "299534",
+        title = "Avengers: Endgame",
+        posterImage = null,
+        backdropImage = "/orjiB3oUIsyz60hoEqkiGpy5CeO.jpg",
+        homePage = null,
+        providerId = "TMDB",
+        externalIds = mapOf(
+            MediaIdSource.TMDB to "299534",
+            MediaIdSource.IMDB to "tt4154796",
+        ),
+    )
 
     @Before
     fun setUp() {
-        api = StreamPlayApi(
-            client = OkHttpClient(),
-            provider = StreamPlay()
-        )
+        api = StreamPlayApi(providerId = "StreamPlay")
     }
 
     @Test
     @Throws(Exception::class)
     fun getLinks() = runBlocking {
-        val testMovie = api.testFilm
-
         val links = mutableListOf<MediaLink>()
         api.getLinks(
-            testMovie.identifier,
-            testMovie,
-            null,
-            links::add
+            media = testMovie,
+            episode = null,
+            onLinkFound = links::add
         )
 
         assert(links.isNotEmpty())
