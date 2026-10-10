@@ -6,6 +6,7 @@ import com.abrogani.streamplay.util.Mapper.toLinkDataString
 import com.abrogani.streamplay.util.Mapper.toStream
 import com.abrogani.streamplay.util.Mapper.toSubtitle
 import com.flixclusive.core.util.coroutines.asyncCalls
+import com.flixclusive.core.util.log.errorLog
 import com.flixclusive.model.media.MediaMetadata
 import com.flixclusive.model.media.PartialMedia
 import com.flixclusive.model.media.common.MediaIdSource
@@ -66,21 +67,33 @@ class StreamPlayApi internal constructor(
 
         // The plugin registers its own providers (the TMDB-based one and the anime one).
         val apis = loader.load(context).apis
+        val failures = java.util.Collections.synchronizedList(mutableListOf<LinkageError>())
+
         asyncCalls(
             *apis.map<MainAPI, suspend () -> Unit> { api ->
                 {
                     // The TMDB-based provider needs API 26+.
                     if (api.name != TMDB_PROVIDER_NAME || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        api.loadLinks(
-                            data = data,
-                            isCasting = false,
-                            subtitleCallback = { onLinkFound(it.toSubtitle()) },
-                            callback = { onLinkFound(it.toStream()) }
-                        )
+                        try {
+                            api.loadLinks(
+                                data = data,
+                                isCasting = false,
+                                subtitleCallback = { onLinkFound(it.toSubtitle()) },
+                                callback = { onLinkFound(it.toStream()) }
+                            )
+                        } catch (e: LinkageError) {
+                            // Built against newer libraries than the host ships; don't let one
+                            // provider take the others down with it.
+                            errorLog("[StreamPlay] ${api.name} is incompatible with this host: $e")
+                            failures.add(e)
+                        }
                     }
                 }
             }.toTypedArray()
         )
+
+        // Only surface the error when nothing could run at all.
+        if (failures.size == apis.size) throw failures.first()
     }
 
     private companion object {

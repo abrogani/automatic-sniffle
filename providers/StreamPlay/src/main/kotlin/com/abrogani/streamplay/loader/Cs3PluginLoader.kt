@@ -64,7 +64,16 @@ internal class Cs3PluginLoader(
             attachResources(appContext, plugin, file)
         }
 
-        withIOContext { plugin.load(appContext) }
+        withIOContext {
+            try {
+                plugin.load(appContext)
+            } catch (e: LinkageError) {
+                // The plugin may be built against newer libraries than the host ships (e.g. coroutines
+                // 1.11's `runBlockingK`). It registers its providers before its extractors, so whatever
+                // registered before the failure is still usable.
+                warnLog("[StreamPlay] Plugin finished loading with a binary incompatibility: $e")
+            }
+        }
 
         // The plugin registers its APIs in CloudStream's global holder; pick out only ours.
         val apis = APIHolder.allProviders.filter { it.javaClass.classLoader === classLoader }
