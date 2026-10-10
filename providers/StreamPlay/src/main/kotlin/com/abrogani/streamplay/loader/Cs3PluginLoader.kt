@@ -3,16 +3,22 @@ package com.abrogani.streamplay.loader
 import android.content.Context
 import android.content.res.AssetManager
 import android.content.res.Resources
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import com.abrogani.streamplay.settings.BAD_VERSION_KEY
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withIOContext
 import com.flixclusive.core.util.log.errorLog
 import com.flixclusive.core.util.log.infoLog
 import com.flixclusive.core.util.log.warnLog
 import com.flixclusive.core.util.network.okhttp.request
+import com.flixclusive.provider.extensions.getInt
+import com.flixclusive.provider.extensions.setInt
 import com.lagradost.cloudstream3.APIHolder
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import dalvik.system.DexClassLoader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -23,7 +29,9 @@ import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 internal class Cs3PluginLoader(
-    private val client: OkHttpClient
+    private val client: OkHttpClient,
+    private val settings: DataStore<Preferences>,
+    private val index: suspend () -> RemotePlugin = { PluginIndex.fetch(client) },
 ) {
     private val mutex = Mutex()
     private var loaded: LoadedPlugin? = null
@@ -34,12 +42,83 @@ internal class Cs3PluginLoader(
         val classLoader: ClassLoader,
     )
 
+    data class UpdateStatus(
+        val installed: Int?,
+        val latest: Int,
+        val available: Boolean,
+    )
+
     suspend fun load(context: Context): LoadedPlugin = mutex.withLock {
+        loadLocked(context.applicationContext ?: context)
+    }
+
+    suspend fun installedVersion(context: Context): Int? = withIOContext {
+        installedFile(context)?.let { readManifest(it).optInt("version") }
+    }
+
+    suspend fun ensureInstalled(context: Context) {
+        mutex.withLock {
+            val appContext = context.applicationContext ?: context
+            installedFile(appContext) ?: install(appContext)
+        }
+    }
+
+    suspend fun checkForUpdate(context: Context): UpdateStatus {
+        val remote = index()
+        val installed = installedVersion(context)
+        val bad = settings.getInt(BAD_VERSION_KEY, -1)
+
+        return UpdateStatus(
+            installed = installed,
+            latest = remote.version,
+            available = (installed == null || remote.version > installed) && remote.version != bad,
+        )
+    }
+
+    suspend fun update(context: Context): Boolean = mutex.withLock {
+        val appContext = context.applicationContext ?: context
+        val remote = index()
+        val installed = installedFile(appContext)?.let { readManifest(it).optInt("version") }
+        if (installed != null && remote.version <= installed) return false
+
+        val dir = directory(appContext)
+        val temp = download(remote, dir)
+        val current = File(dir, FILE_NAME)
+        val previous = File(dir, PREVIOUS_FILE_NAME)
+
+        unloadLocked()
+        if (current.exists()) {
+            previous.setWritable(true)
+            previous.delete()
+            check(current.renameTo(previous)) { "Could not back up the installed plugin" }
+        }
+        check(temp.renameTo(current)) { "Could not store the updated plugin" }
+        current.setReadOnly()
+
+        try {
+            loadLocked(appContext)
+            infoLog("[StreamPlay] Updated plugin v$installed -> v${remote.version}")
+            true
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+
+            errorLog(e)
+            unloadLocked()
+            current.setWritable(true)
+            current.delete()
+            if (previous.exists()) previous.renameTo(current)
+            settings.setInt(BAD_VERSION_KEY, remote.version)
+            false
+        }
+    }
+
+    suspend fun unload() = mutex.withLock { unloadLocked() }
+
+    private suspend fun loadLocked(context: Context): LoadedPlugin {
         loaded?.let { return it }
 
-        val appContext = context.applicationContext ?: context
-        initCloudStreamContext(appContext)
-        val file = ensureFile(appContext)
+        initCloudStreamContext(context)
+        val file = installedFile(context) ?: install(context)
         val manifest = readManifest(file)
 
         val classLoader = DexClassLoader(
@@ -49,33 +128,38 @@ internal class Cs3PluginLoader(
             Cs3PluginLoader::class.java.classLoader
         )
 
-        val plugin = Class.forName(manifest.getString("pluginClassName"), true, classLoader)
-            .getDeclaredConstructor()
-            .newInstance() as Plugin
+        try {
+            val plugin = Class.forName(manifest.getString("pluginClassName"), true, classLoader)
+                .getDeclaredConstructor()
+                .newInstance() as Plugin
 
-        plugin.filename = file.absolutePath
-        if (manifest.optBoolean("requiresResources")) {
-            attachResources(appContext, plugin, file)
-        }
-
-        withIOContext {
-            try {
-                plugin.load(appContext)
-            } catch (e: LinkageError) {
-                // Providers register before extractors, so what loaded before the failure still works.
-                warnLog("[StreamPlay] Plugin finished loading with a binary incompatibility: $e")
+            plugin.filename = file.absolutePath
+            if (manifest.optBoolean("requiresResources")) {
+                attachResources(context, plugin, file)
             }
+
+            withIOContext {
+                try {
+                    plugin.load(context)
+                } catch (e: LinkageError) {
+                    // Providers register before extractors, so what loaded before the failure still works.
+                    warnLog("[StreamPlay] Plugin finished loading with a binary incompatibility: $e")
+                }
+            }
+
+            val apis = APIHolder.allProviders.filter { it.javaClass.classLoader === classLoader }
+            check(apis.isNotEmpty()) { "StreamPlay plugin did not register any providers" }
+
+            infoLog("[StreamPlay] Loaded ${manifest.optString("name")} v${manifest.optInt("version")} (${apis.joinToString { it.name }})")
+
+            return LoadedPlugin(plugin, apis, classLoader).also { loaded = it }
+        } catch (e: Throwable) {
+            APIHolder.allProviders.removeAll { it.javaClass.classLoader === classLoader }
+            throw e
         }
-
-        val apis = APIHolder.allProviders.filter { it.javaClass.classLoader === classLoader }
-        check(apis.isNotEmpty()) { "StreamPlay plugin did not register any providers" }
-
-        infoLog("[StreamPlay] Loaded ${manifest.optString("name")} v${manifest.optInt("version")} (${apis.joinToString { it.name }})")
-
-        LoadedPlugin(plugin, apis, classLoader).also { loaded = it }
     }
 
-    suspend fun unload() = mutex.withLock {
+    private fun unloadLocked() {
         val current = loaded ?: return
         loaded = null
 
@@ -83,7 +167,6 @@ internal class Cs3PluginLoader(
             .onFailure { errorLog(it) }
         current.apis.forEach { runCatching { APIHolder.removePluginMapping(it) } }
         APIHolder.allProviders.removeAll(current.apis.toSet())
-        Unit
     }
 
     private fun initCloudStreamContext(context: Context) {
@@ -106,33 +189,44 @@ internal class Cs3PluginLoader(
         }.onFailure { warnLog("[StreamPlay] Could not set CloudStreamApp.context: $it") }
     }
 
-    private suspend fun ensureFile(context: Context): File = withIOContext {
-        val dir = File(context.codeCacheDir, "streamplay").apply { mkdirs() }
-        val file = File(dir, "StreamPlay-${Cs3Source.COMMIT}.cs3")
-
-        if (file.exists() && file.sha256() == Cs3Source.SHA256) {
-            return@withIOContext file
+    private fun directory(context: Context): File {
+        File(context.codeCacheDir, "streamplay").takeIf { it.exists() }?.let { legacy ->
+            legacy.walkBottomUp().forEach { it.setWritable(true); it.delete() }
         }
 
-        dir.listFiles()?.forEach { it.setWritable(true); it.delete() }
+        return File(context.filesDir, "streamplay").apply { mkdirs() }
+    }
 
-        infoLog("[StreamPlay] Downloading plugin from ${Cs3Source.URL}")
-        val temp = File(dir, "download.tmp")
-        client.request(url = Cs3Source.URL).execute().use { response ->
+    private fun installedFile(context: Context): File? =
+        File(directory(context), FILE_NAME).takeIf { it.exists() }
+
+    private suspend fun install(context: Context): File {
+        val dir = directory(context)
+        val temp = download(index(), dir)
+        val file = File(dir, FILE_NAME)
+
+        check(temp.renameTo(file)) { "Could not store StreamPlay plugin" }
+        // Android 14+ refuses to load a writable dex file.
+        file.setReadOnly()
+        return file
+    }
+
+    private suspend fun download(remote: RemotePlugin, dir: File): File = withIOContext {
+        infoLog("[StreamPlay] Downloading plugin v${remote.version} from ${remote.url}")
+        val temp = File(dir, "download.tmp").also { it.delete() }
+
+        client.request(url = remote.url).execute().use { response ->
             check(response.isSuccessful) { "Failed to download StreamPlay plugin [${response.code}]" }
             temp.outputStream().use { out -> response.body.byteStream().copyTo(out) }
         }
 
         val actual = temp.sha256()
-        if (actual != Cs3Source.SHA256) {
+        if (actual != remote.sha256) {
             temp.delete()
-            throw SecurityException("StreamPlay plugin checksum mismatch (expected ${Cs3Source.SHA256}, got $actual)")
+            throw SecurityException("StreamPlay plugin checksum mismatch (expected ${remote.sha256}, got $actual)")
         }
 
-        check(temp.renameTo(file)) { "Could not store StreamPlay plugin" }
-        // Android 14+ refuses to load a writable dex file.
-        file.setReadOnly()
-        file
+        temp
     }
 
     private fun readManifest(file: File): JSONObject =
@@ -170,5 +264,10 @@ internal class Cs3PluginLoader(
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private companion object {
+        const val FILE_NAME = "StreamPlay.cs3"
+        const val PREVIOUS_FILE_NAME = "StreamPlay.cs3.previous"
     }
 }
