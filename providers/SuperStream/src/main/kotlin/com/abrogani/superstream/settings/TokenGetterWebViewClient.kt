@@ -3,12 +3,18 @@ package com.abrogani.superstream.settings
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.flixclusive.provider.settings.ProviderSettings
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import com.flixclusive.provider.extensions.setInt
+import com.flixclusive.provider.extensions.setString
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 private const val TOKEN_COOKIE_NAME = "ui"
 
 class TokenGetterWebViewClient(
-    private val settings: ProviderSettings,
+    private val settings: DataStore<Preferences>,
+    private val scope: CoroutineScope,
     private val onTokenReceived: () -> Unit
 ) : WebViewClient() {
     private val cookieManager = CookieManager.getInstance()
@@ -18,17 +24,19 @@ class TokenGetterWebViewClient(
             val token = getToken(url)
 
             if (token != null) {
-                settings.setInt(
-                    key = TOKEN_STATUS_KEY,
-                    `val` = TokenStatus.Online.ordinal
-                )
+                scope.launch {
+                    settings.setInt(
+                        key = TOKEN_STATUS_KEY,
+                        value = TokenStatus.Online.ordinal
+                    )
 
-                settings.setString(
-                    key = TOKEN_KEY,
-                    `val` = token
-                )
+                    settings.setString(
+                        key = TOKEN_KEY,
+                        value = token
+                    )
 
-                onTokenReceived()
+                    onTokenReceived()
+                }
             }
         }
     }

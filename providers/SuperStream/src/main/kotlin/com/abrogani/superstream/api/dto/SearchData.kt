@@ -1,8 +1,9 @@
 package com.abrogani.superstream.api.dto
 
 import com.abrogani.superstream.BuildConfig.SUPERSTREAM_FIRST_API
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.util.FilmType
+import com.abrogani.superstream.api.util.old.SuperStreamUtil.yearToReleaseDate
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.common.MediaType
 import com.google.gson.annotations.SerializedName
 
 internal const val ITEMS_PER_PAGE = 20
@@ -22,33 +23,27 @@ internal data class SearchItem(
     val poster: String? = null,
     val year: Int? = null,
 ) {
-    private val rating: Double
-        get() = imdbRating?.toDoubleOrNull() ?: 0.0
+    private val rating: Double?
+        get() = imdbRating?.toDoubleOrNull()
 
-    private val filmType: FilmType
+    private val mediaType: MediaType
         get() = when (boxType) {
-            BoxType.Series.value -> FilmType.TV_SHOW
-            BoxType.Movies.value -> FilmType.MOVIE
-            else -> throw IllegalArgumentException("[SuperStream]> Unknown film type: $boxType")
+            BoxType.Series.value -> MediaType.SHOW
+            BoxType.Movies.value -> MediaType.MOVIE
+            else -> throw IllegalArgumentException("[SuperStream]> Unknown media type: $boxType")
         }
 
     private val homePage: String
-        get() = "$SUPERSTREAM_FIRST_API/${filmType.type}/$id"
+        get() = "$SUPERSTREAM_FIRST_API/${if (mediaType.isMovie) "movie" else "tv"}/$id"
 
-    fun toFilmSearchItem(
-        provider: String,
-        imdbId: String?,
-        tmdbId: Int?,
-    ) = FilmSearchItem(
+    fun toPartialMedia(providerId: String) = PartialMedia(
         id = id.toString(),
-        tmdbId = tmdbId,
-        providerId = provider,
-        imdbId = imdbId,
+        providerId = providerId,
         title = name,
         rating = rating,
-        year = year,
+        releaseDate = year?.yearToReleaseDate(),
         homePage = homePage,
         posterImage = poster,
-        filmType = filmType,
+        type = mediaType,
     )
 }

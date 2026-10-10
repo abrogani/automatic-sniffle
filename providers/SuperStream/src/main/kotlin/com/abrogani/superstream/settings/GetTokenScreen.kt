@@ -1,6 +1,8 @@
 package com.abrogani.superstream.settings
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.border
@@ -24,10 +26,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,8 +45,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.abrogani.superstream.BuildConfig
 import com.flixclusive.core.util.android.showToast
-import com.flixclusive.provider.settings.ProviderSettings
+import com.flixclusive.provider.extensions.getIntAsFlow
+import com.flixclusive.provider.extensions.remove
+import com.flixclusive.provider.extensions.setInt
 import com.flixclusive.provider.util.res.painterResource
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private fun getTokenStatusLabel(
@@ -69,13 +74,14 @@ private fun getTokenStatusLabel(
 
 @Composable
 internal fun GetTokenScreen(
-    settings: ProviderSettings,
+    settings: DataStore<Preferences>,
 ) {
     val context = LocalContext.current
-    var tokenStatus by remember {
-        val index = settings.getInt(TOKEN_STATUS_KEY, 0)
-        mutableStateOf(TokenStatus.entries[index])
-    }
+    val scope = rememberCoroutineScope()
+    val tokenStatusIndex by remember(settings) {
+        settings.getIntAsFlow(TOKEN_STATUS_KEY, 0)
+    }.collectAsState(initial = 0)
+    val tokenStatus = TokenStatus.entries.getOrElse(tokenStatusIndex) { TokenStatus.Offline }
     val color = remember(tokenStatus) {
         when (tokenStatus) {
             TokenStatus.Online -> Color(0xFF9FF375)
@@ -87,9 +93,9 @@ internal fun GetTokenScreen(
         TokenGetterWebView(
             context = context,
             settings = settings,
+            scope = scope,
             onTokenReceived = {
                 context.showToast("Token has been set successfully!")
-                tokenStatus = TokenStatus.Online
             }
         )
     }
@@ -163,11 +169,12 @@ internal fun GetTokenScreen(
                         return@ElevatedButton
                     }
 
-                    tokenStatus = TokenStatus.Offline
-                    settings.remove(TOKEN_KEY)
-                    settings.setInt(TOKEN_STATUS_KEY, tokenStatus.ordinal)
+                    scope.launch {
+                        settings.remove(TOKEN_KEY)
+                        settings.setInt(TOKEN_STATUS_KEY, TokenStatus.Offline.ordinal)
 
-                    context.showToast("Token has been reset!")
+                        context.showToast("Token has been reset!")
+                    }
                 },
                 shape = MaterialTheme.shapes.small,
                 modifier = Modifier

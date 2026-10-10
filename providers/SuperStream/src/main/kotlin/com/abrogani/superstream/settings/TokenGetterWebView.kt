@@ -6,7 +6,9 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import com.flixclusive.core.util.network.Crypto
 import com.flixclusive.core.util.network.okhttp.UserAgentManager
-import com.flixclusive.provider.settings.ProviderSettings
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import kotlinx.coroutines.CoroutineScope
 
 private const val GET_TOKEN_URL_ENCODED
     = "aHR0cHM6Ly93d3cuZmViYm94LmNvbS9sb2dpbi9nb29nbGU/anVtcD0lMkY="
@@ -14,7 +16,8 @@ private const val GET_TOKEN_URL_ENCODED
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
 internal class TokenGetterWebView(
     context: Context,
-    settings: ProviderSettings,
+    settings: DataStore<Preferences>,
+    scope: CoroutineScope,
     onTokenReceived: () -> Unit
 ) : WebView(context) {
     private val cookieManager = CookieManager.getInstance()
@@ -27,6 +30,7 @@ internal class TokenGetterWebView(
 
         webViewClient = TokenGetterWebViewClient(
             settings = settings,
+            scope = scope,
             onTokenReceived = onTokenReceived
         )
 

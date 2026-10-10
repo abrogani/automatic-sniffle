@@ -1,22 +1,22 @@
 package com.abrogani.superstream.api.dto
 
-import com.flixclusive.model.film.util.FilmType
+import com.flixclusive.model.media.common.MediaType
 
 enum class BoxType(val value: Int) {
     Series(value = 2),
     Movies(value = 1);
 
     companion object {
-        fun fromFilmType(filmType: FilmType): BoxType {
-            return when (filmType) {
-                FilmType.TV_SHOW -> Series
-                FilmType.MOVIE -> Movies
+        fun fromMediaType(type: MediaType): BoxType {
+            return when (type) {
+                MediaType.SHOW -> Series
+                MediaType.MOVIE -> Movies
             }
         }
-        fun toFilmType(type: Int): FilmType {
+        fun toMediaType(type: Int): MediaType {
             return when (type) {
-                1 -> FilmType.MOVIE
-                2 -> FilmType.TV_SHOW
+                1 -> MediaType.MOVIE
+                2 -> MediaType.SHOW
                 else -> throw IllegalArgumentException("Invalid box type: $type")
             }
         }

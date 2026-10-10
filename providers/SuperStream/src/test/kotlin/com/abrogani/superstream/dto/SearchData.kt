@@ -1,6 +1,6 @@
 package com.abrogani.superstream.dto
 
-import com.flixclusive.model.film.FilmSearchItem
+import com.flixclusive.model.media.PartialMedia
 import com.abrogani.superstream.util.SuperStreamUtil
 import com.google.gson.annotations.SerializedName
 
@@ -16,12 +16,11 @@ internal data class SearchItem(
     val year: Int? = null,
 ) {
     companion object {
-        fun SearchItem.toFilmSearchItem(): FilmSearchItem {
-            return FilmSearchItem(
+        fun SearchItem.toPartialMedia(): PartialMedia {
+            return PartialMedia(
                 id = id.toString(),
                 title = title ?: "UNKNOWN TITLE",
-                releaseDate = year.toString(),
-                filmType = SuperStreamUtil.SSMediaType.getSSMediaType(boxType).toFilmType(),
+                type = SuperStreamUtil.SSMediaType.getSSMediaType(boxType).toMediaType(),
                 posterImage = null,
                 homePage = null,
                 providerId = "SuperStream"

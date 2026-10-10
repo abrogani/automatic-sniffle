@@ -3,7 +3,7 @@ package com.abrogani.superstream.util
 import com.flixclusive.core.util.network.json.fromJson
 import com.flixclusive.core.util.network.okhttp.HttpMethod
 import com.flixclusive.core.util.network.okhttp.formRequest
-import com.flixclusive.model.film.util.FilmType
+import com.flixclusive.model.media.common.MediaType
 import com.abrogani.superstream.BuildConfig.SUPERSTREAM_FIFTH_API
 import com.abrogani.superstream.util.Constants.API_IV
 import com.abrogani.superstream.util.Constants.API_KEY
@@ -75,17 +75,17 @@ internal object SuperStreamUtil {
         Series(2),
         Movies(1);
 
-        fun toFilmType() = if (this == Series) FilmType.TV_SHOW else FilmType.MOVIE
+        fun toMediaType() = if (this == Series) MediaType.SHOW else MediaType.MOVIE
 
         companion object {
             fun getSSMediaType(value: Int?): SSMediaType {
                 return entries.firstOrNull { it.value == value } ?: Movies
             }
 
-            fun fromFilmType(filmType: FilmType): SSMediaType {
-                return when (filmType) {
-                    FilmType.TV_SHOW -> Series
-                    FilmType.MOVIE -> Movies
+            fun fromMediaType(type: MediaType): SSMediaType {
+                return when (type) {
+                    MediaType.SHOW -> Series
+                    MediaType.MOVIE -> Movies
                 }
             }
         }

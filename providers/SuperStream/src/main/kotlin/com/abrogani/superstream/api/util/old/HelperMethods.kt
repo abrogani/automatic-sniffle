@@ -12,6 +12,8 @@ import com.abrogani.superstream.api.util.old.Constants.COMMON_HEADERS
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Base64
 import java.util.Locale
 
@@ -83,19 +85,19 @@ internal object SuperStreamUtil {
         ) throw Exception(lazyMessage)
     }
 
-    fun String?.toValidReleaseDate(format: String = "MMMM d, yyyy"): String? {
+    /** Parses the site's "MMMM d, yyyy" date into epoch millis, or `null` if it cannot be parsed. */
+    fun String?.toReleaseDate(format: String = "MMMM d, yyyy"): Long? {
         if (isNullOrBlank())
             return null
 
-        val inputFormat = SimpleDateFormat(format, Locale.US)
-        val outputFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-
         return try {
-            val date = inputFormat.parse(this)
-            outputFormat.format(date)
+            SimpleDateFormat(format, Locale.US).parse(this)?.time
         } catch (e: Exception) {
-            // throw Exception("Cannot parse release date of show: $this")
-            this
+            null
         }
     }
+
+    /** Only the year is known, so pin it to January 1st (UTC). */
+    fun Int.yearToReleaseDate(): Long =
+        LocalDate.of(this, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
 }

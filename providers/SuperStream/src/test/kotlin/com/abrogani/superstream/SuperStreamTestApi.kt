@@ -1,24 +1,25 @@
 package com.abrogani.superstream
 
 import com.flixclusive.core.util.coroutines.asyncCalls
-import com.flixclusive.model.film.Film
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.SearchResponseData
-import com.flixclusive.model.film.TvShow
-import com.flixclusive.model.film.common.tv.Episode
-import com.flixclusive.model.film.util.FilmType
+import com.flixclusive.model.media.MediaMetadata as FlxMediaMetadata
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.PaginatedMedia
+import com.flixclusive.model.media.common.tv.Episode
+import com.flixclusive.model.media.common.tv.Season
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
+import com.flixclusive.provider.capability.MediaLinkProviderApi
+import com.flixclusive.provider.capability.MediaLinkType
+import com.flixclusive.provider.capability.MediaMetadataProviderApi
+import com.flixclusive.provider.capability.SearchProviderApi
 import com.flixclusive.provider.filter.FilterList
 import com.abrogani.superstream.dto.CommonResponse
 import com.abrogani.superstream.dto.MediaMetadata
-import com.abrogani.superstream.dto.MediaMetadata.Companion.toFilmMetadata
 import com.abrogani.superstream.dto.SearchData
-import com.abrogani.superstream.dto.SearchItem.Companion.toFilmSearchItem
+import com.abrogani.superstream.dto.SearchItem.Companion.toPartialMedia
 import com.abrogani.superstream.dto.StreamData
 import com.abrogani.superstream.dto.SubtitleData
 import com.abrogani.superstream.dto.SubtitleItem.Companion.toValidSubtitleFilePath
@@ -30,43 +31,52 @@ import com.abrogani.superstream.util.SuperStreamUtil.superStreamCall
 import okhttp3.OkHttpClient
 
 class SuperStreamTestApi(
-    client: OkHttpClient,
-    provider: Provider
-) : ProviderApi(client, provider) {
+    private val client: OkHttpClient,
+) : SearchProviderApi, MediaMetadataProviderApi, MediaLinkProviderApi {
+    override val filters: FilterList = FilterList()
 
-    override suspend fun getMetadata(film: Film): FilmMetadata {
-        val apiQuery = if (film.filmType == FilmType.MOVIE) {
-            """{"childmode":"0","uid":"","app_version":"$APP_VERSION","appid":"$APP_ID","module":"Movie_detail","channel":"Website","mid":"${film.id}","lang":"en","expired_date":"${getExpiryDate()}","platform":"android","oss":"","group":""}"""
-        } else {
-            """{"childmode":"0","uid":"","app_version":"$APP_VERSION","appid":"$APP_ID","module":"TV_detail_1","display_all":"1","channel":"Website","lang":"en","expired_date":"${getExpiryDate()}","platform":"android","tid":"${film.id}"}"""
-        }
+    override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
 
+    override suspend fun getMovie(media: PartialMedia): Movie {
+        val apiQuery =
+            """{"childmode":"0","uid":"","app_version":"$APP_VERSION","appid":"$APP_ID","module":"Movie_detail","channel":"Website","mid":"${media.id}","lang":"en","expired_date":"${getExpiryDate()}","platform":"android","oss":"","group":""}"""
+
+        return fetchMetadata(apiQuery).toMovie()
+    }
+
+    override suspend fun getShow(media: PartialMedia): Show {
+        val apiQuery =
+            """{"childmode":"0","uid":"","app_version":"$APP_VERSION","appid":"$APP_ID","module":"TV_detail_1","display_all":"1","channel":"Website","lang":"en","expired_date":"${getExpiryDate()}","platform":"android","tid":"${media.id}"}"""
+
+        return fetchMetadata(apiQuery).toShow()
+    }
+
+    override suspend fun getSeason(show: Show, season: Season.Partial): Season.Full? = null
+
+    private fun fetchMetadata(apiQuery: String): MediaMetadata {
         val response = client.superStreamCall<CommonResponse<MediaMetadata>>(apiQuery)
         response?.msg?.raiseOnError("Failed to fetch movie info.")
 
-        return response?.data!!.toFilmMetadata()
+        return response?.data!!
     }
 
     override suspend fun search(
-        title: String,
+        query: String,
         page: Int,
-        id: String?,
-        imdbId: String?,
-        tmdbId: Int?,
         filters: FilterList
-    ): SearchResponseData<FilmSearchItem> {
+    ): PaginatedMedia<PartialMedia> {
         val itemsPerPage = 20
         val apiQuery =
             // Originally 8 pagelimit
-            """{"childmode":"0","app_version":"$APP_VERSION","appid":"$APP_ID","module":"Search5","channel":"Website","page":"$page","lang":"en","type":"all","keyword":"${imdbId ?: title}","pagelimit":"$itemsPerPage","expired_date":"${getExpiryDate()}","platform":"android"}"""
+            """{"childmode":"0","app_version":"$APP_VERSION","appid":"$APP_ID","module":"Search5","channel":"Website","page":"$page","lang":"en","type":"all","keyword":"$query","pagelimit":"$itemsPerPage","expired_date":"${getExpiryDate()}","platform":"android"}"""
 
         val response = client.superStreamCall<SearchData>(query = apiQuery)
 
         val mappedItems = response?.results?.map {
-            it.toFilmSearchItem()
+            it.toPartialMedia()
         } ?: throw NullPointerException("Cannot search on SuperStream")
 
-        return SearchResponseData(
+        return PaginatedMedia(
             page = page,
             results = mappedItems,
             hasNextPage = (page * itemsPerPage) < response.total
@@ -74,18 +84,18 @@ class SuperStreamTestApi(
     }
 
     override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+        media: FlxMediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
+        val watchId = media.id
         val season = episode?.season
         val episodeNumber = episode?.number
 
         val isMovie = episode == null
 
         val tvShowInfo = if(season != null) {
-            getMetadata(film) as TvShow
+            getShow(PartialMedia(type = media.type, id = media.id, title = media.title, providerId = media.providerId, posterImage = null))
         } else null
 
         val seasonToUse = if(

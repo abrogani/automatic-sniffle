@@ -1,16 +1,15 @@
 package com.abrogani.superstream
 
-import android.content.Context
 import android.util.Base64
 import com.flixclusive.core.util.log.LogRule
 import com.flixclusive.core.util.log.debugLog
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.TvShow
-import com.flixclusive.model.film.common.tv.Episode
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.tv.Episode
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderApi
 import com.abrogani.superstream.util.CipherUtil.decrypt
 import com.abrogani.superstream.util.Constants
 import com.abrogani.superstream.util.CustomCertificateClient
@@ -20,7 +19,6 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Rule
@@ -35,26 +33,22 @@ class SuperStreamTest {
     @OptIn(ExperimentalCoroutinesApi::class)
     private val scope = TestScope(UnconfinedTestDispatcher())
 
-    private lateinit var api: ProviderApi
+    private lateinit var api: SuperStreamTestApi
 
-    private val movie = Movie(
-        tmdbId = 299534,
-        imdbId = "tt4154796",
+    private val movie = PartialMedia(
+        type = MediaType.MOVIE,
+        id = "",
         title = "Avengers: Endgame",
+        providerId = "TMDB",
         posterImage = null,
-        homePage = null,
-        id = null,
-        providerId = "TMDB"
     )
 
-    private val tvShow = TvShow(
-        tmdbId = 94605,
-        imdbId = "tt11126994",
+    private val tvShow = PartialMedia(
+        type = MediaType.SHOW,
+        id = "",
         title = "Arcane",
+        providerId = "TMDB",
         posterImage = null,
-        homePage = null,
-        id = null,
-        providerId = "TMDB"
     )
 
     @Before
@@ -94,14 +88,7 @@ class SuperStreamTest {
             privateKeyPassword = null
         )
 
-        api = SuperStreamTestApi(
-            client,
-            object: Provider() {
-                override fun getApi(context: Context, client: OkHttpClient): ProviderApi {
-                    throw NotImplementedError()
-                }
-            }
-        )
+        api = SuperStreamTestApi(client)
     }
 
     @Test
@@ -114,8 +101,7 @@ class SuperStreamTest {
 
         val links = mutableListOf<MediaLink>()
         api.getLinks(
-            watchId = watchId!!,
-            film = movie,
+            media = movie.copy(id = watchId!!),
             onLinkFound = links::add
         )
 
@@ -135,9 +121,8 @@ class SuperStreamTest {
 
         val links = mutableListOf<MediaLink>()
         api.getLinks(
-            watchId = watchId!!,
-            film = tvShow,
-            episode = Episode(season = 1, number = 1),
+            media = tvShow.copy(id = watchId!!),
+            episode = Episode(id = "$watchId-s1e1", season = 1, number = 1, isReleased = true),
             onLinkFound = links::add
         )
 
@@ -153,7 +138,7 @@ class SuperStreamTest {
         assertNotNull(watchId) {
             "Watch ID cannot be null"
         }
-        val metadata = api.getMetadata(film = movie.copy(id = watchId))
+        val metadata = api.getMovie(movie.copy(id = watchId!!))
 
         assert(metadata is Movie)
         println(metadata)
@@ -165,18 +150,15 @@ class SuperStreamTest {
         assertNotNull(watchId) {
             "Watch ID cannot be null"
         }
-        val metadata = api.getMetadata(film = tvShow.copy(id = watchId))
+        val metadata = api.getShow(tvShow.copy(id = watchId!!))
 
-        assert(metadata is TvShow)
+        assert(metadata is Show)
         println(metadata)
     }
 
     @Test
     fun `search for Avengers Endgame`() = scope.runTest {
-        val response = api.search(
-            title = movie.title,
-            imdbId = movie.imdbId,
-        )
+        val response = api.search(query = movie.title)
 
         assert(response.results.isNotEmpty()) {
             "No search results found for ${movie.title}"
@@ -185,11 +167,8 @@ class SuperStreamTest {
         debugLog("Search results: ${response.results}")
     }
 
-    private suspend fun getWatchId(film: FilmMetadata): String? {
-        return api.search(
-            title = film.title,
-            imdbId = film.imdbId,
-        ).results.firstOrNull()?.id
+    private suspend fun getWatchId(media: MediaMetadata): String? {
+        return api.search(query = media.title).results.firstOrNull { it.type == media.type }?.id
     }
 
     @Test
