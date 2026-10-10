@@ -1,9 +1,12 @@
 package com.abrogani.flixhq.api.util
 
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.model.film.FilmSearchItem
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.common.MediaType
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Locale
 
 internal fun Elements.getEpisodeId(episode: Int): String? {
@@ -47,32 +50,41 @@ internal fun String.replaceWhitespaces(toReplace: String) = replace(
     toReplace
 )
 
-internal fun Element.toFilmSearchItem(
+internal fun Element.toPartialMedia(
     baseUrl: String,
-    provider: String
-): FilmSearchItem {
-    val filmType = when {
-        select("div.film-detail > div.fd-infor > span.float-right").text() == "Movie" -> FilmType.MOVIE
-        else -> FilmType.TV_SHOW
+    providerId: String
+): PartialMedia {
+    val type = when {
+        select("div.film-detail > div.fd-infor > span.float-right").text() == "Movie" -> MediaType.MOVIE
+        else -> MediaType.SHOW
     }
 
-    val year = if (filmType == FilmType.MOVIE) {
+    val year = if (type == MediaType.MOVIE) {
         val rawYear = select("div.film-detail > div.fd-infor > span:nth-child(1)").text()
 
         rawYear.toIntOrNull()
     } else null
 
 
-    return FilmSearchItem(
+    return PartialMedia(
         id = select("div.film-poster > a").attr("href").substring(1),
-        providerId = provider,
+        providerId = providerId,
         title = select("div.film-detail > h2 > a").attr("title"),
         posterImage = select("div.film-poster > img").attr("data-src"),
         homePage = "${baseUrl}${select("div.film-poster > a").attr("href")}",
-        year = year,
-        filmType = filmType
+        releaseDate = year?.let { LocalDate.of(it, 1, 1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() },
+        type = type
     )
 }
+
+/** Parses an ISO date (`yyyy-MM-dd`) into epoch millis, or `null` if it is not one. */
+internal fun String.toReleaseDate(): Long? = try {
+    LocalDate.parse(this).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+} catch (e: Exception) {
+    null
+}
+
+internal fun Long.year(): Int = Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).year
 
 internal fun Elements.getServerName(mediaId: String): String {
     val anchorElement = select("a")

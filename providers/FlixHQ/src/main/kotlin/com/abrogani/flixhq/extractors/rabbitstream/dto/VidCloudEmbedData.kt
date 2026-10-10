@@ -1,9 +1,10 @@
 package com.abrogani.flixhq.extractors.rabbitstream.dto
 
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.flixhq.api.util.fromJson
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.model.provider.link.SubtitleSource
 import com.google.gson.JsonDeserializationContext
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
@@ -59,3 +60,11 @@ internal class VidCloudEmbedDataCustomDeserializer(
         )
     }
 }
+
+internal fun parseVidCloudEmbedData(
+    json: String,
+    decryptSource: (String) -> List<DecryptedSource>
+): VidCloudEmbedData = GsonBuilder()
+    .registerTypeAdapter(VidCloudEmbedData::class.java, VidCloudEmbedDataCustomDeserializer(decryptSource))
+    .create()
+    .fromJson(json, VidCloudEmbedData::class.java)

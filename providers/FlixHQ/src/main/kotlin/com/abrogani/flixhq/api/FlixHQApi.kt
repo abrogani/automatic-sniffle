@@ -1,43 +1,43 @@
 package com.abrogani.flixhq.api
 
-import android.content.Context
 import com.abrogani.flixhq.api.util.TvShowCacheData
 import com.abrogani.flixhq.api.util.getEpisodeId
 import com.abrogani.flixhq.api.util.getSeasonId
 import com.abrogani.flixhq.api.util.getServerName
 import com.abrogani.flixhq.api.util.getServerUrl
 import com.abrogani.flixhq.api.util.replaceWhitespaces
-import com.abrogani.flixhq.api.util.toFilmSearchItem
+import com.abrogani.flixhq.api.util.toPartialMedia
+import com.abrogani.flixhq.api.util.toReleaseDate
+import com.abrogani.flixhq.api.util.year
 import com.abrogani.flixhq.extractors.rabbitstream.UpCloud
 import com.abrogani.flixhq.extractors.rabbitstream.VidCloud
-import com.abrogani.flixhq.webview.FlixHQWebView
 import com.abrogani.flixhq.webview.util.removeAccents
 import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.network.okhttp.request
-import com.flixclusive.model.film.Film
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.FilmSearchItem
-import com.flixclusive.model.film.Movie
-import com.flixclusive.model.film.SearchResponseData
-import com.flixclusive.model.film.util.FilmType
-import com.flixclusive.provider.Provider
-import com.flixclusive.provider.ProviderWebViewApi
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.Movie
+import com.flixclusive.model.media.PartialMedia
+import com.flixclusive.model.media.Show
+import com.flixclusive.model.media.common.MediaIdSource
+import com.flixclusive.model.media.common.MediaType
+import com.flixclusive.model.media.common.PaginatedMedia
+import com.flixclusive.model.media.common.tv.Season
+import com.flixclusive.provider.capability.CrossMatchProviderApi
+import com.flixclusive.provider.capability.MediaMetadataProviderApi
+import com.flixclusive.provider.capability.SearchProviderApi
 import com.flixclusive.provider.filter.FilterList
-import com.flixclusive.provider.webview.ProviderWebView
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 
 class FlixHQApi(
-    client: OkHttpClient,
-    context: Context,
-    provider: Provider
-) : ProviderWebViewApi(
-    client = client,
-    context = context,
-    provider = provider
-) {
-    override val baseUrl: String = "https://flixhq.to"
+    internal val client: OkHttpClient,
+    private val providerId: String,
+) : SearchProviderApi, MediaMetadataProviderApi, CrossMatchProviderApi {
+    val baseUrl: String = "https://flixhq.to"
     private var tvCacheData: TvShowCacheData = TvShowCacheData()
+
+    override val filters: FilterList = FilterList()
 
     @Suppress("SpellCheckingInspection")
     internal val extractors = mapOf(
@@ -46,20 +46,11 @@ class FlixHQApi(
     )
 
     override suspend fun search(
-        title: String,
+        query: String,
         page: Int,
-        id: String?,
-        imdbId: String?,
-        tmdbId: Int?,
         filters: FilterList,
-    ): SearchResponseData<FilmSearchItem> {
-        val query = title.removeAccents()
-
-        var searchResult = SearchResponseData<FilmSearchItem>(
-            page = page,
-            hasNextPage = false,
-            results = emptyList()
-        )
+    ): PaginatedMedia<PartialMedia> {
+        val query = query.removeAccents()
 
         client.request(
             url = "${baseUrl}/search/${
@@ -68,85 +59,134 @@ class FlixHQApi(
         ).execute().body?.string()?.let { data ->
             val doc = Jsoup.parse(data)
             val navSelector = "div.pre-pagination:nth-child(3) > nav:nth-child(1) > ul:nth-child(1)"
-            searchResult = searchResult.copy(
-                hasNextPage = doc.select(navSelector).size > 0 && doc.select(navSelector).last()
-                    ?.hasClass("active") == false
-            )
+            val hasNextPage = doc.select(navSelector).size > 0 && doc.select(navSelector).last()
+                ?.hasClass("active") == false
 
-            val results = mutableListOf<FilmSearchItem>()
-
-            doc.select(".film_list-wrap > div.flw-item").forEach { element ->
-                results.add(
-                    element.toFilmSearchItem(
-                        baseUrl = baseUrl,
-                        provider = provider.name
-                    )
+            val results = doc.select(".film_list-wrap > div.flw-item").map { element ->
+                element.toPartialMedia(
+                    baseUrl = baseUrl,
+                    providerId = providerId
                 )
             }
 
-            return searchResult.copy(results = results)
+            return PaginatedMedia(
+                page = page,
+                hasNextPage = hasNextPage,
+                results = results
+            )
         }
 
-        return SearchResponseData()
+        return PaginatedMedia()
     }
 
-    override suspend fun getMetadata(film: Film): FilmMetadata {
-        var watchIdToUse = film.identifier
-        val filmType = film.filmType
-        
-        if (!watchIdToUse.startsWith(baseUrl)) {
-            watchIdToUse = "$baseUrl/$watchIdToUse"
-        }
+    override suspend fun getMovie(media: PartialMedia): Movie {
+        val (doc, uid) = fetchDetailsPage(media)
 
-        if (tvCacheData.filmInfo?.id == watchIdToUse)
-            return tvCacheData.filmInfo!!
-
-        var filmDetails = Movie(
-            id = watchIdToUse.split("to/").last(),
-            providerId = film.providerId,
-            title = film.title,
-            posterImage = film.posterImage,
-            backdropImage = film.backdropImage,
-            homePage = film.homePage,
+        val movie = Movie(
+            id = media.watchPath(),
+            providerId = media.providerId,
+            title = doc.select(".heading-name > a:nth-child(1)").text().ifEmpty { media.title },
+            posterImage = media.posterImage,
+            backdropImage = media.backdropImage,
+            homePage = media.homePage,
+            releaseDate = doc.getReleaseDate(),
         )
 
-        val response = client.request(url = watchIdToUse).execute()
+        tvCacheData = TvShowCacheData(id = uid, movie)
+        return movie
+    }
+
+    override suspend fun getShow(media: PartialMedia): Show {
+        val (doc, uid) = fetchDetailsPage(media)
+        val seasons = fetchSeasons(uid)
+
+        val show = Show(
+            id = media.watchPath(),
+            providerId = media.providerId,
+            title = doc.select(".heading-name > a:nth-child(1)").text().ifEmpty { media.title },
+            posterImage = media.posterImage,
+            backdropImage = media.backdropImage,
+            homePage = media.homePage,
+            releaseDate = doc.getReleaseDate(),
+            // Episodes are resolved lazily when links are requested, so only the season count is known.
+            seasons = emptyList(),
+            totalSeasons = seasons.size,
+            totalEpisodes = 0,
+        )
+
+        tvCacheData = TvShowCacheData(id = uid, show, seasons = seasons)
+        return show
+    }
+
+    override suspend fun getSeason(show: Show, season: Season.Partial): Season.Full? = null
+
+    // FlixHQ has no external ids to look up, so only fuzzy matching is possible.
+    override suspend fun getById(
+        mediaType: MediaType,
+        sourceIds: Map<MediaIdSource, String>,
+    ): MediaMetadata? = null
+
+    override suspend fun getByFuzzy(media: MediaMetadata): MediaMetadata? {
+        val mediaYear = media.releaseDate?.year()
+        val maxPage = 3
+
+        for (page in 1..maxPage) {
+            val searchResponse = search(
+                query = media.title,
+                page = page
+            )
+
+            if (searchResponse.results.isEmpty())
+                return null
+
+            for (result in searchResponse.results) {
+                val titleMatches = result.title.equals(media.title, ignoreCase = true)
+                val typeMatches = result.type == media.type
+                if (!titleMatches || !typeMatches) continue
+
+                if (media.isShow) {
+                    val showInfo = getShow(result)
+
+                    val yearMatches = mediaYear != null && showInfo.releaseDate?.year() == mediaYear
+                    val seasonCountMatches = (media as? Show)?.totalSeasons == showInfo.totalSeasons
+
+                    if (yearMatches || seasonCountMatches) {
+                        return showInfo
+                    }
+                } else if (mediaYear != null && result.releaseDate?.year() == mediaYear) {
+                    return getMovie(result)
+                }
+            }
+
+            if (!searchResponse.hasNextPage) break
+        }
+
+        return null
+    }
+
+    private fun PartialMedia.watchPath(): String = id.removePrefix("$baseUrl/")
+
+    private fun Document.getReleaseDate(): Long? {
+        val releaseDate = select("div.row-line:nth-child(3)").text()
+            .replace("Released: ", "").trim()
+
+        return releaseDate.toReleaseDate()
+    }
+
+    private fun fetchDetailsPage(media: PartialMedia): Pair<Document, String> {
+        val response = client.request(url = "$baseUrl/${media.watchPath()}").execute()
         val data = response.body?.string()
+            ?: throw NullPointerException("Media info is null!")
 
-        if (data != null) {
-            val doc = Jsoup.parse(data)
-            filmDetails = filmDetails.copy(
-                title = doc.select(".heading-name > a:nth-child(1)").text()
-            )
-
-            val uid = doc.select(".watch_block").attr("data-id")
-            val releaseDate = Jsoup.parse(data).select("div.row-line:nth-child(3)").text()
-                .replace("Released: ", "").trim()
-            val year = releaseDate.split("-").firstOrNull()?.toIntOrNull()
-
-            filmDetails = filmDetails.copy(year = year)
-
-            if (filmType == FilmType.MOVIE) {
-                filmDetails = filmDetails.copy(
-                    id = uid,
-                    title = "${filmDetails.title} Movie",
-                )
-            }
-
-            tvCacheData = TvShowCacheData(id = uid, filmDetails)
-            return filmDetails
-        }
-
-        throw NullPointerException("FilmInfo is null!")
+        val doc = Jsoup.parse(data)
+        return doc to doc.select(".watch_block").attr("data-id")
     }
 
-    override fun getWebView(): ProviderWebView {
-        return FlixHQWebView(
-            mClient = client,
-            context = context,
-            api = this
-        )
-    }
+    private fun fetchSeasons(uid: String) =
+        Jsoup.parse(
+            client.request(url = "$baseUrl/ajax/season/list/$uid").execute().body?.string()
+                ?: throw Exception("Failed to fetch season data from provider")
+        ).select(".dropdown-menu > a")
 
     internal fun getEpisodeId(
         watchId: String,

@@ -1,20 +1,18 @@
 package com.abrogani.flixhq.extractors.rabbitstream
 
 import com.abrogani.flixhq.extractors.rabbitstream.dto.DecryptedSource
-import com.abrogani.flixhq.extractors.rabbitstream.dto.VidCloudEmbedData
 import com.abrogani.flixhq.extractors.rabbitstream.dto.VidCloudEmbedData.Companion.toSubtitle
-import com.abrogani.flixhq.extractors.rabbitstream.dto.VidCloudEmbedDataCustomDeserializer
+import com.abrogani.flixhq.extractors.rabbitstream.dto.parseVidCloudEmbedData
 import com.abrogani.flixhq.extractors.rabbitstream.dto.VidCloudKey
 import com.flixclusive.core.util.coroutines.asyncCalls
 import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.coroutines.mapIndexedAsync
 import com.flixclusive.core.util.exception.safeCall
 import com.flixclusive.core.util.network.Crypto.decryptAes
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.flixhq.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
-import com.flixclusive.provider.extractor.EmbedExtractor
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import java.net.URL
@@ -28,10 +26,10 @@ internal class UpCloud(client: OkHttpClient): RabbitStream(client) {
 
 
 internal open class RabbitStream(
-    client: OkHttpClient,
-) : EmbedExtractor(client) {
-    override val name: String = "RabbitStream"
-    override val baseUrl: String = "https://rabbitstream.net"
+    private val client: OkHttpClient,
+) {
+    open val name: String = "RabbitStream"
+    val baseUrl: String = "https://rabbitstream.net"
 
     suspend fun extract(
         url: String,
@@ -63,14 +61,11 @@ internal open class RabbitStream(
         if(responseBody.isBlank())
             throw Exception("Cannot fetch source")
 
-        val data = fromJson<VidCloudEmbedData>(
-            json = responseBody,
-            serializer = VidCloudEmbedDataCustomDeserializer {
-                safeCall {
-                    fromJson<List<DecryptedSource>>(decryptAes(it, key.e4Key))
-                } ?: throw IllegalStateException("Key might be outdated!")
-            }
-        )
+        val data = parseVidCloudEmbedData(responseBody) {
+            safeCall {
+                fromJson<List<DecryptedSource>>(decryptAes(it, key.e4Key))
+            } ?: throw IllegalStateException("Key might be outdated!")
+        }
 
         if (data.sources.isEmpty()) {
             throw Exception("Sources are empty!")
@@ -120,13 +115,5 @@ internal open class RabbitStream(
                 }
             }
         )
-    }
-
-    override suspend fun extract(
-        url: String,
-        customHeaders: Map<String, String>?,
-        onLinkFound: (MediaLink) -> Unit
-    ) {
-        throw IllegalStateException("Called the wrong extract method for this extractor")
     }
 }

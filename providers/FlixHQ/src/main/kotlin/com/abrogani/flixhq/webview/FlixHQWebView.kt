@@ -11,21 +11,20 @@ import com.abrogani.flixhq.api.FlixHQApi
 import com.abrogani.flixhq.api.dto.FlixHQInitialSourceData
 import com.abrogani.flixhq.extractors.rabbitstream.dto.VidCloudKey
 import com.abrogani.flixhq.webview.util.INJECTOR_SCRIPT
-import com.abrogani.flixhq.webview.util.getMediaId
 import com.abrogani.flixhq.webview.util.setup
-import com.flixclusive.core.util.coroutines.AppDispatchers.Companion.withDefaultContext
-import com.flixclusive.core.util.coroutines.AppDispatchers.Companion.withIOContext
-import com.flixclusive.core.util.coroutines.AppDispatchers.Companion.withMainContext
+import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withDefaultContext
+import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withIOContext
+import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
 import com.flixclusive.core.util.exception.safeCall
 import com.flixclusive.core.util.log.debugLog
 import com.flixclusive.core.util.log.infoLog
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.flixhq.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.UserAgentManager
 import com.flixclusive.core.util.network.okhttp.request
-import com.flixclusive.model.film.FilmMetadata
-import com.flixclusive.model.film.common.tv.Episode
+import com.flixclusive.core.util.webview.WebViewDriver
+import com.flixclusive.model.media.MediaMetadata
+import com.flixclusive.model.media.common.tv.Episode
 import com.flixclusive.model.provider.link.MediaLink
-import com.flixclusive.provider.webview.ProviderWebView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
@@ -39,7 +38,7 @@ class FlixHQWebView(
     private val mClient: OkHttpClient,
     private val api: FlixHQApi,
     context: Context,
-) : ProviderWebView(context) {
+) : WebViewDriver(context) {
     override val isHeadless = false
     override val name = "FlixHQ WebView"
 
@@ -101,16 +100,13 @@ class FlixHQWebView(
             .replace("__user_agent__", userAgent)
     }
 
-    override suspend fun getLinks(
-        watchId: String,
-        film: FilmMetadata,
+    suspend fun getLinks(
+        media: MediaMetadata,
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        infoLog("[FHQWebView] Getting links for ${film.title}")
-        val watchIdToUse = withIOContext {
-            api.getMediaId(film = film)
-        } ?: throw Exception("Can't find watch id!")
+        infoLog("[FHQWebView] Getting links for ${media.title}")
+        val watchIdToUse = media.id
 
         val servers = withIOContext {
             api.getEpisodeIdAndServers(

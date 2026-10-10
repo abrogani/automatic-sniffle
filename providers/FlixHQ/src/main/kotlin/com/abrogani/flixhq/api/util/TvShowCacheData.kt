@@ -1,6 +1,6 @@
 package com.abrogani.flixhq.api.util
 
-import com.flixclusive.model.film.FilmMetadata
+import com.flixclusive.model.media.MediaMetadata
 import org.jsoup.select.Elements
 
 /**
@@ -16,7 +16,7 @@ import org.jsoup.select.Elements
  */
 data class TvShowCacheData(
     val id: String? = null,
-    val filmInfo: FilmMetadata? = null,
+    val filmInfo: MediaMetadata? = null,
     val seasons: Elements? = null,
     val episodes: Elements? = null,
 )
