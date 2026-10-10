@@ -1,28 +1,8 @@
 import com.flixclusive.model.provider.Language
 import com.flixclusive.model.provider.ProviderType
-import com.flixclusive.model.provider.Status
+import com.flixclusive.model.provider.ProviderStatus
 
-dependencies {
-    implementation("androidx.core:core:1.15.0")
-
-    // Comment if not implementing own SettingsScreen
-    // No need to specify the compose version explicitly
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.runtime:runtime")
-    // ================= END: COMPOSE UI =================
-}
-
-android {
-    buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
-    }
-}
+android {}
 
 flxProvider {
     description =
@@ -49,5 +29,5 @@ flxProvider {
 
     providerType = ProviderType.All
 
-    status = Status.Down
+    status = ProviderStatus.Down
 }

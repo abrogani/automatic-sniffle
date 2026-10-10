@@ -11,3 +11,8 @@
 local.properties
 .kotlin
 readme.sh
+
+.agents
+.claude
+skills-lock.json
+CLAUDE.md

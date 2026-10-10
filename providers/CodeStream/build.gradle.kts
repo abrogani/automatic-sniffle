@@ -1,28 +1,11 @@
-
 import com.flixclusive.model.provider.Language
 import com.flixclusive.model.provider.ProviderType
-import com.flixclusive.model.provider.Status
-import org.jetbrains.kotlin.konan.properties.Properties
-
-dependencies {
-    implementation("androidx.core:core:1.15.0")
-
-    // Comment if not implementing own SettingsScreen
-    // No need to specify the compose version explicitly
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.runtime:runtime")
-    // ================= END: COMPOSE UI =================
-}
+import com.flixclusive.model.provider.ProviderStatus
+import java.util.Properties
 
 android {
     buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
+        buildConfig = true
     }
 
     defaultConfig {
@@ -64,5 +47,5 @@ flxProvider {
 
     providerType = ProviderType.All
 
-    status = Status.Working
+    status = ProviderStatus.Working
 }

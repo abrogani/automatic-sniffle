@@ -1,6 +1,6 @@
 import com.flixclusive.model.provider.Language
 import com.flixclusive.model.provider.ProviderType
-import com.flixclusive.model.provider.Status
+import com.flixclusive.model.provider.ProviderStatus
 
 flxProvider {
     description =
@@ -28,5 +28,5 @@ flxProvider {
 
     providerType = ProviderType.All
 
-    status = Status.Working
+    status = ProviderStatus.Working
 }

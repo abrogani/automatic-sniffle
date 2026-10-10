@@ -1,47 +1,31 @@
-
 import com.flixclusive.model.provider.Author
 import com.flixclusive.model.provider.Language
 import com.flixclusive.model.provider.ProviderType
-import com.flixclusive.model.provider.Status
-import org.jetbrains.kotlin.konan.properties.Properties
+import com.flixclusive.model.provider.ProviderStatus
+import java.util.Properties
 
 dependencies {
-    implementation("androidx.core:core:1.15.0")
 
-    // Comment if not implementing own SettingsScreen
-    // No need to specify the compose version explicitly
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.runtime:runtime")
-    // ================= END: COMPOSE UI =================
-
-
+//noinspection Aligned16KB
+    implementation(libs.quickjs)
     //noinspection Aligned16KB
-    fatImplementation("app.cash.quickjs:quickjs-android:0.9.2")
-    //noinspection Aligned16KB
-    androidTestImplementation("app.cash.quickjs:quickjs-android:0.9.2")
+    androidTestImplementation(libs.quickjs)
 }
 
 android {
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
     }
 
     defaultConfig {
         val properties = Properties()
         properties.load(project.rootProject.file("local.properties").inputStream())
 
-
-        buildConfigField("String", "TMDB_API", "\"${properties.getProperty("TMDB_API")}\"")
+buildConfigField("String", "TMDB_API", "\"${properties.getProperty("TMDB_API")}\"")
         buildConfigField("String", "CINEMATV_API", "\"${properties.getProperty("CINEMATV_API")}\"")
         buildConfigField("String", "SFMOVIES_API", "\"${properties.getProperty("SFMOVIES_API")}\"")
         buildConfigField("String", "ZSHOW_API", "\"${properties.getProperty("ZSHOW_API")}\"")
@@ -118,5 +102,5 @@ flxProvider {
 
     providerType = ProviderType.All
 
-    status = Status.Working
+    status = ProviderStatus.Working
 }
