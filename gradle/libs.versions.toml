@@ -6,11 +6,13 @@ compose-activity = "1.13.0"
 compose-bom = "2026.05.01"
 core-gradle = "1.5.1"
 core-stubs = "1.4.0"
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 datastore = "1.2.1"
 desugar = "2.1.5"
 gson = "2.14.0"
 jsoup = "1.22.2"
+ktor = "3.5.2"
+ksoup = "0.2.6"
 junit = "4.13.2"
 kotlin = "2.3.21"
 mockk = "1.14.9"
@@ -95,6 +97,8 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
 khttp = { module = "io.karn:khttp-android", version.ref = "khttp" }
 nicehttp = { module = "com.github.Blatzar:NiceHttp", version.ref = "nicehttp" }
+ktor-http = { module = "io.ktor:ktor-http", version.ref = "ktor" }
+ksoup = { module = "com.fleeksoft.ksoup:ksoup", version.ref = "ksoup" }
 quickjs = { module = "app.cash.quickjs:quickjs-android", version.ref = "quickjs" }
 rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 rhino-android = { module = "com.faendir.rhino:rhino-android", version.ref = "rhino-android" }

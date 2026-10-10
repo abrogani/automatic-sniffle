@@ -131,6 +131,9 @@ subprojects {
             androidTestImplementation(rootProject.libs.kotlinx.serialization.json)
             androidTestImplementation(platform(rootProject.libs.compose.bom))
             androidTestImplementation(rootProject.libs.compose.runtime)
+            androidTestImplementation(rootProject.libs.coil.compose)
+            androidTestImplementation(rootProject.libs.datastore)
+            androidTestImplementation(rootProject.libs.kotlinx.coroutines)
             androidTestImplementation(rootProject.libs.mockk)
             androidTestImplementation(rootProject.libs.kotlinx.coroutines.test)
             androidTestImplementation(rootProject.libs.androidx.test.ext.junit)
@@ -143,7 +146,6 @@ subprojects {
             androidTestImplementation(rootProject.libs.khttp)
             androidTestImplementation(rootProject.libs.tmdb.java)
             androidTestImplementation(rootProject.libs.fuzzywuzzy)
-            androidTestImplementation(rootProject.libs.rhino.android)
         }
         // ================ ------------- =================
     }

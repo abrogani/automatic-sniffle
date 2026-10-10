@@ -1,5 +1,6 @@
 package com.abrogani.streamplay
 
+import android.content.Context
 import android.os.Build
 import com.abrogani.streamplay.util.Mapper.toLinkDataString
 import com.abrogani.streamplay.util.Mapper.toStream
@@ -16,18 +17,18 @@ import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.provider.capability.CrossMatchProviderApi
 import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.capability.MediaLinkType
-import com.phisher98.StreamPlay
-import com.phisher98.StreamPlayAnime
+import com.abrogani.streamplay.loader.Cs3PluginLoader
+import com.lagradost.cloudstream3.MainAPI
 
 /**
  * This is a set of providers combined into one. It has no catalog of its own: every source
  * resolves links straight from the TMDB/IMDb ids of the media it is handed.
  * */
-class StreamPlayApi(
-    private val providerId: String
+class StreamPlayApi internal constructor(
+    private val context: Context,
+    private val providerId: String,
+    private val loader: Cs3PluginLoader,
 ) : MediaLinkProviderApi, CrossMatchProviderApi {
-    private val streamPlay = StreamPlay()
-    private val streamPlayAnime = StreamPlayAnime()
 
     override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
 
@@ -61,33 +62,28 @@ class StreamPlayApi(
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
+        val data = media.toLinkDataString(episode)
+
+        // The plugin registers its own providers (the TMDB-based one and the anime one).
+        val apis = loader.load(context).apis
         asyncCalls(
-            {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    streamPlay.loadLinks(
-                        data = media.toLinkDataString(episode),
-                        isCasting = false,
-                        subtitleCallback = {
-                            onLinkFound(it.toSubtitle())
-                        },
-                        callback = {
-                            onLinkFound(it.toStream())
-                        }
-                    )
-                }
-            },
-            {
-                streamPlayAnime.loadLinks(
-                    data = media.toLinkDataString(episode),
-                    isCasting = false,
-                    subtitleCallback = {
-                        onLinkFound(it.toSubtitle())
-                    },
-                    callback = {
-                        onLinkFound(it.toStream())
+            *apis.map<MainAPI, suspend () -> Unit> { api ->
+                {
+                    // The TMDB-based provider needs API 26+.
+                    if (api.name != TMDB_PROVIDER_NAME || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        api.loadLinks(
+                            data = data,
+                            isCasting = false,
+                            subtitleCallback = { onLinkFound(it.toSubtitle()) },
+                            callback = { onLinkFound(it.toStream()) }
+                        )
                     }
-                )
-            },
+                }
+            }.toTypedArray()
         )
+    }
+
+    private companion object {
+        const val TMDB_PROVIDER_NAME = "StreamPlay"
     }
 }

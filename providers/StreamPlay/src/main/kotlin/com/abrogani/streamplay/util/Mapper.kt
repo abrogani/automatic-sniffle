@@ -11,7 +11,6 @@ import com.flixclusive.model.provider.link.Subtitle
 import com.google.gson.Gson
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.phisher98.StreamPlay
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -55,22 +54,24 @@ internal object Mapper {
         val episodeReleaseDate = reformatDate(episode?.releaseDate)
         val lastSeason = if (episode != null) (this as? Show)?.totalSeasons else null
 
-        val linkData = StreamPlay.LinkData(
-            id = tmdbId?.toIntOrNull(),
-            title = title,
-            year = releaseDate?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).year },
-            season = episode?.season,
-            episode = episode?.number,
-            imdbId = imdbId,
-            isAnime = (isChinese || isJapanese) && hasAnimationGenre,
-            isCartoon = hasAnimationGenre,
-            isBollywood = isHindi,
-            isAsian = isChinese || isJapanese || isKorean,
-            epsTitle = episode?.title,
-            date = reformattedReleaseDate,
-            airedDate = episodeReleaseDate,
-            airedYear = episodeReleaseDate.split("-").first().toIntOrNull(),
-            lastSeason = lastSeason,
+        // Mirrors the fields of the plugin's internal `LinkData`. The class is not available at
+        // compile time (the plugin is loaded at runtime), so it is sent as plain JSON.
+        val linkData = mapOf(
+            "id" to tmdbId?.toIntOrNull(),
+            "title" to title,
+            "year" to releaseDate?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).year },
+            "season" to episode?.season,
+            "episode" to episode?.number,
+            "imdbId" to imdbId,
+            "isAnime" to ((isChinese || isJapanese) && hasAnimationGenre),
+            "isCartoon" to hasAnimationGenre,
+            "isBollywood" to isHindi,
+            "isAsian" to (isChinese || isJapanese || isKorean),
+            "epsTitle" to episode?.title,
+            "date" to reformattedReleaseDate,
+            "airedDate" to episodeReleaseDate,
+            "airedYear" to episodeReleaseDate.split("-").first().toIntOrNull(),
+            "lastSeason" to lastSeason,
         )
 
         return gson.toJson(linkData)

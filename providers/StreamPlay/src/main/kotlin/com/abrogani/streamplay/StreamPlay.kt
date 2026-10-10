@@ -1,31 +1,32 @@
 package com.abrogani.streamplay
 
 import android.content.Context
+import com.abrogani.streamplay.loader.Cs3PluginLoader
 import com.flixclusive.provider.FlixclusiveProvider
 import com.flixclusive.provider.ProviderPlugin
 import com.flixclusive.provider.capability.CrossMatchProviderApi
 import com.flixclusive.provider.capability.MediaLinkProviderApi
-import com.phisher98.StreamPlayPlugin
+import okhttp3.OkHttpClient
 
 @FlixclusiveProvider
 class StreamPlay : ProviderPlugin() {
-    private val cs3Plugin by lazy { StreamPlayPlugin() }
-    private var isInitialized = false
+    private val loader by lazy { Cs3PluginLoader(client = OkHttpClient()) }
 
-    // `manifest` is injected after construction, so this must stay lazy.
-    private val api by lazy { StreamPlayApi(providerId = id) }
+    private var api: StreamPlayApi? = null
 
-    private fun initialize(context: Context) {
-        if (!isInitialized) {
-            cs3Plugin.load(context)
-            isInitialized = true
-        }
-    }
+    // `manifest` is injected after construction, so the API must be built lazily.
+    private fun getApi(context: Context) = api ?: StreamPlayApi(
+        context = context.applicationContext ?: context,
+        providerId = id,
+        loader = loader,
+    ).also { api = it }
 
-    override suspend fun getCrossMatchApi(context: Context): CrossMatchProviderApi = api
+    override suspend fun getCrossMatchApi(context: Context): CrossMatchProviderApi = getApi(context)
 
-    override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi {
-        initialize(context)
-        return api
+    override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi = getApi(context)
+
+    override suspend fun onUnload(context: Context) {
+        loader.unload()
+        api = null
     }
 }
