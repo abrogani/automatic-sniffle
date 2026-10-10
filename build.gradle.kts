@@ -152,10 +152,12 @@ subprojects {
 }
 
 tasks.register<Delete>("clean") {
+    description = "Cleans all build directory"
     delete(rootProject.layout.buildDirectory)
 }
 
 tasks.register("getCSJar") {
+    description = "Downloads a custom compiled CS3 built JAR file"
     doFirst {
         logger.lifecycle("Fetching Cloudstream JAR")
 

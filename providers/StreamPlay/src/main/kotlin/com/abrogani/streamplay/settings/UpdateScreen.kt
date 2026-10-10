@@ -47,18 +47,24 @@ internal fun UpdateScreen(
     var installed by remember { mutableStateOf<Int?>(null) }
     var latest by remember { mutableStateOf<Int?>(null) }
     var updateAvailable by remember { mutableStateOf(false) }
+    var skipped by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
 
     val check: () -> Unit = {
+        busy = true
         scope.launch {
-            busy = true
             runCatching { loader.checkForUpdate(context) }
                 .onSuccess {
                     installed = it.installed
                     latest = it.latest
                     updateAvailable = it.available
-                    message = if (it.available) "Update available" else "Up to date"
+                    skipped = it.skipped
+                    message = when {
+                        it.available -> "Update available"
+                        it.skipped -> "v${it.latest} failed to load before. You can try it again."
+                        else -> "Up to date"
+                    }
                 }
                 .onFailure { message = "Could not check for updates: ${it.message}" }
             busy = false
@@ -66,14 +72,28 @@ internal fun UpdateScreen(
     }
 
     val update: () -> Unit = {
+        busy = true
+        message = "Updating..."
         scope.launch {
-            busy = true
-            message = "Updating..."
-            runCatching { loader.update(context) }
-                .onSuccess { updated ->
+            runCatching { loader.update(context, force = skipped) }
+                .onSuccess { result ->
                     installed = loader.installedVersion(context)
-                    updateAvailable = !updated && updateAvailable
-                    message = if (updated) "Updated" else "The new build could not be loaded; kept the current one"
+                    when (result) {
+                        Cs3PluginLoader.UpdateResult.Updated -> {
+                            updateAvailable = false
+                            skipped = false
+                            message = "Updated"
+                        }
+                        Cs3PluginLoader.UpdateResult.UpToDate -> {
+                            updateAvailable = false
+                            message = "Up to date"
+                        }
+                        Cs3PluginLoader.UpdateResult.RolledBack -> {
+                            updateAvailable = false
+                            skipped = true
+                            message = "The new build could not be loaded; kept the current one"
+                        }
+                    }
                 }
                 .onFailure { message = "Update failed: ${it.message}" }
             busy = false
@@ -120,8 +140,8 @@ internal fun UpdateScreen(
             OutlinedButton(onClick = check, enabled = !busy) {
                 Text("Check for updates")
             }
-            Button(onClick = update, enabled = !busy && updateAvailable) {
-                Text("Update now")
+            Button(onClick = update, enabled = !busy && (updateAvailable || skipped)) {
+                Text(if (skipped) "Try again" else "Update now")
             }
         }
     }

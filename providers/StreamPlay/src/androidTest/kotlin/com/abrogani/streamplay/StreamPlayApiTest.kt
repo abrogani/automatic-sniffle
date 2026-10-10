@@ -11,11 +11,14 @@ import com.flixclusive.model.media.Movie
 import com.flixclusive.model.media.common.MediaIdSource
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.provider.extensions.getInt
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -111,9 +114,10 @@ class StreamPlayApiTest {
 
         val newer = newLoader { real.copy(version = real.version + 1) }
         assertTrue(newer.checkForUpdate(context).available)
-        assertTrue(newer.update(context))
+        assertEquals(Cs3PluginLoader.UpdateResult.Updated, newer.update(context))
 
         assertTrue(newer.load(context).apis.isNotEmpty())
+        assertFalse(newer.checkForUpdate(context).available)
     }
 
     @Test
@@ -141,11 +145,74 @@ class StreamPlayApiTest {
             RemotePlugin(url = notAPlugin, version = real.version + 1, sha256 = sha256(body))
         }
 
-        assertFalse(broken.update(context))
+        assertEquals(Cs3PluginLoader.UpdateResult.RolledBack, broken.update(context))
         assertEquals(real.version, loader.installedVersion(context))
         assertEquals(real.version + 1, settings.getInt(BAD_VERSION_KEY, -1))
-        assertFalse(broken.checkForUpdate(context).available)
+
+        val status = broken.checkForUpdate(context)
+        assertFalse(status.available)
+        assertTrue(status.skipped)
+        assertEquals(Cs3PluginLoader.UpdateResult.UpToDate, broken.update(context))
+        assertEquals(Cs3PluginLoader.UpdateResult.RolledBack, broken.update(context, force = true))
         assertTrue(loader.load(context).apis.isNotEmpty())
+    }
+
+    private val pluginFile get() = File(context.filesDir, "streamplay/StreamPlay.cs3")
+    private val backupFile get() = File(context.filesDir, "streamplay/StreamPlay.cs3.previous")
+
+    @Test
+    fun deletedFileIsDownloadedAgain() = runBlocking {
+        loader.ensureInstalled(context)
+        val real = PluginIndex.fetch(client)
+
+        pluginFile.setWritable(true)
+        assertTrue(pluginFile.delete())
+        newLoader().ensureInstalled(context)
+
+        assertEquals(real.version, loader.installedVersion(context))
+        assertTrue(newLoader().load(context).apis.isNotEmpty())
+    }
+
+    @Test
+    fun corruptFileIsReplaced() = runBlocking {
+        loader.ensureInstalled(context)
+        val real = PluginIndex.fetch(client)
+
+        pluginFile.setWritable(true)
+        pluginFile.writeBytes(byteArrayOf(1, 2, 3))
+        assertEquals(null, newLoader().installedVersion(context))
+        newLoader().ensureInstalled(context)
+
+        assertEquals(real.version, loader.installedVersion(context))
+    }
+
+    @Test
+    fun interruptedSwapRestoresTheBackup() = runBlocking {
+        loader.ensureInstalled(context)
+        val real = PluginIndex.fetch(client)
+
+        pluginFile.setWritable(true)
+        assertTrue(pluginFile.renameTo(backupFile))
+
+        assertEquals(real.version, newLoader().installedVersion(context))
+        assertTrue(pluginFile.exists())
+        assertFalse(backupFile.exists())
+    }
+
+    @Test
+    fun concurrentUpdatesInstallOnce() = runBlocking {
+        val real = PluginIndex.fetch(client)
+        loader.ensureInstalled(context)
+
+        val newer = newLoader { real.copy(version = real.version + 1) }
+        val results = listOf(
+            async { newer.update(context) },
+            async { newer.update(context) },
+        ).awaitAll()
+
+        assertEquals(1, results.count { it == Cs3PluginLoader.UpdateResult.Updated })
+        assertEquals(1, results.count { it == Cs3PluginLoader.UpdateResult.UpToDate })
+        assertNotNull(newer.load(context))
     }
 
     @Test

@@ -25,18 +25,26 @@ android {
 
 flxProvider {
     description = """
-        A Flixclusive version of Phisher98's StreamPlay.
-        
-        REMINDER: Only works on PR-c62ada6 versions and above. WILL NOT WORK ON v2.1.3 stable!!!!!!
+        Phisher98's StreamPlay for Flixclusive: a multi-source aggregator for movies, TV shows and anime.
+
+        The StreamPlay plugin is downloaded the first time the provider is used and can be kept up to date from this provider's settings. Leave "Update automatically" on, or turn it off to get a notification when an update is available.
     """.trimIndent()
 
     changelog =
         """
-        # WILL NOT WORK ON v2.1.3 STABLE!!!!!!
+        # v1.1.0
+
+        - The StreamPlay plugin is now downloaded on first use instead of being bundled, and can be updated without a new release of this provider.
+        - New provider settings: installed and latest version, "Update automatically" (on by default), "Check for updates" and "Update now".
+        - With automatic updates off, a notification tells you when an update is available.
+        - A new build that fails to load is rolled back and not retried until you choose "Try again".
+        - If the downloaded plugin is missing or corrupted, it is downloaded again.
+        - Fixed the "No base context" error in sources that use a web view.
+        - Provider API updated to core-stubs 1.4.0.
         """.trimIndent()
 
     versionMajor = 1
-    versionMinor = 0
+    versionMinor = 1
     versionPatch = 0
     versionBuild = 0
 

@@ -72,7 +72,11 @@ class StreamPlay : ProviderPlugin() {
                         context.showToast("StreamPlay update available (v${status.installed} -> v${status.latest}). Open the provider's settings to update.")
                     }
                 }
-            }.onFailure { warnLog("[StreamPlay] Update check failed: $it") }
+            }.onFailure {
+                // Let the next capability call retry, e.g. after being offline.
+                checkStarted.set(false)
+                warnLog("[StreamPlay] Update check failed: $it")
+            }
         }
     }
 
