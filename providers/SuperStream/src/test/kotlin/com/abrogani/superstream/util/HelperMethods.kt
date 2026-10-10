@@ -1,6 +1,6 @@
 package com.abrogani.superstream.util
 
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.superstream.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.HttpMethod
 import com.flixclusive.core.util.network.okhttp.formRequest
 import com.flixclusive.model.media.common.MediaType

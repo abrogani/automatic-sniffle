@@ -26,7 +26,7 @@ import com.abrogani.superstream.settings.TOKEN_KEY
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withDefaultContext
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withIOContext
 import com.flixclusive.core.util.coroutines.asyncCalls
-import com.flixclusive.core.util.network.json.fromJson
+import com.abrogani.superstream.api.util.fromJson
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.media.MediaMetadata as FlxMediaMetadata
 import com.flixclusive.model.media.Movie
