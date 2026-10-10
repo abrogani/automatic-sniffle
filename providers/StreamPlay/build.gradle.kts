@@ -6,6 +6,8 @@ import com.flixclusive.model.provider.ProviderStatus
 dependencies {
     implementation(libs.ktor.http)
     implementation(libs.ksoup)
+    implementation(libs.cryptography.core)
+    implementation(libs.cryptography.provider.optimal)
 
 //noinspection Aligned16KB
     implementation(libs.quickjs)
@@ -40,6 +42,7 @@ flxProvider {
         - A new build that fails to load is rolled back and not retried until you choose "Try again".
         - If the downloaded plugin is missing or corrupted, it is downloaded again.
         - Fixed the "No base context" error in sources that use a web view.
+        - Fixed sources that need the cryptography library failing to load.
         - Provider API updated to core-stubs 1.4.0.
         """.trimIndent()
 

@@ -19,6 +19,9 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import dalvik.system.DexClassLoader
+import dev.whyoleg.cryptography.CryptographyProviderApi
+import dev.whyoleg.cryptography.CryptographyProviderContainer
+import dev.whyoleg.cryptography.CryptographySystem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -216,6 +219,8 @@ internal class Cs3PluginLoader(
         loaded?.let { return it }
 
         initCloudStreamContext(context)
+        registerCryptographyProvider()
+        warnIfHostCoroutinesAreOld()
         val file = currentFileLocked(context)
             ?: throw IllegalStateException("StreamPlay plugin is missing or corrupted")
         val manifest = readManifest(file)
@@ -286,6 +291,30 @@ internal class Cs3PluginLoader(
                 .apply { isAccessible = true }
                 .invoke(instance, context)
         }.onFailure { warnLog("[StreamPlay] Could not set CloudStreamApp.context: $it") }
+    }
+
+    // The .flx build drops META-INF, so the library's ServiceLoader lookup finds nothing.
+    @OptIn(CryptographyProviderApi::class)
+    private fun registerCryptographyProvider() {
+        runCatching {
+            if (CryptographySystem.getRegisteredProviders().isNotEmpty()) return
+
+            val container = Class.forName("dev.whyoleg.cryptography.providers.jdk.JdkCryptographyProviderContainer")
+                .getDeclaredConstructor()
+                .newInstance() as CryptographyProviderContainer
+
+            CryptographySystem.registerProvider(container.provider, container.priority)
+        }.onFailure { warnLog("[StreamPlay] Could not register the cryptography provider: $it") }
+    }
+
+    private fun warnIfHostCoroutinesAreOld() {
+        val hasRunBlockingK = runCatching {
+            Class.forName("kotlinx.coroutines.BuildersKt").methods.any { it.name == "runBlockingK" }
+        }.getOrDefault(true)
+
+        if (!hasRunBlockingK) {
+            warnLog("[StreamPlay] The host ships kotlinx-coroutines older than 1.11; sources that use a web view will crash it.")
+        }
     }
 
     private fun directory(context: Context): File {

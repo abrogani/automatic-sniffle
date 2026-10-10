@@ -8,6 +8,10 @@ import com.abrogani.streamplay.loader.PluginIndex
 import com.abrogani.streamplay.loader.RemotePlugin
 import com.abrogani.streamplay.settings.BAD_VERSION_KEY
 import com.flixclusive.model.media.Movie
+import dev.whyoleg.cryptography.CryptographyProviderApi
+import dev.whyoleg.cryptography.CryptographyProviderContainer
+import dev.whyoleg.cryptography.CryptographySystem
+import dev.whyoleg.cryptography.algorithms.SHA256
 import com.flixclusive.model.media.common.MediaIdSource
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.provider.extensions.getInt
@@ -105,6 +109,20 @@ class StreamPlayApiTest {
             .getMethod("getContext")
             .invoke(null)
         assertTrue("CloudStream context not set", holder is android.content.Context)
+    }
+
+    @OptIn(CryptographyProviderApi::class)
+    @Test
+    fun jdkCryptographyProviderWorksOnDevice() = runBlocking {
+        loader.load(context)
+
+        val container = Class.forName("dev.whyoleg.cryptography.providers.jdk.JdkCryptographyProviderContainer")
+            .getDeclaredConstructor()
+            .newInstance() as CryptographyProviderContainer
+        val digest = container.provider.value.get(SHA256).hasher().hashBlocking("a".encodeToByteArray())
+
+        assertEquals(32, digest.size)
+        assertTrue(CryptographySystem.getRegisteredProviders().isNotEmpty())
     }
 
     @Test
