@@ -26,7 +26,10 @@ internal object Mapper {
     fun SubtitleFile.toSubtitle(): Subtitle {
         return Subtitle(
             language = lang,
-            url = url
+            url = url,
+            flags = headers
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { setOf(Flag.RequiresAuth(it)) }
         )
     }
 
