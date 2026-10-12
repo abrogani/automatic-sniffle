@@ -46,8 +46,7 @@ internal object SuperStreamUtil {
             headers = COMMON_HEADERS.toHeaders()
         ).execute()
 
-        val responseBody = response.body?.string()
-            ?: throw Exception(errorMessage + " [${response.code}]")
+        val responseBody = response.body.string()
 
         if (
             responseBody.contains(

@@ -298,7 +298,7 @@ class SuperStreamApi(
         val filesAreNotEmpty = sharedResources.files?.isNotEmpty() == true
         if (parentId == null && filesAreNotEmpty) {
             val cleanedFiles = cleanFiles(
-                files = sharedResources.files!!,
+                files = sharedResources.files,
                 shareKey = shareKey
             )
 
@@ -307,7 +307,7 @@ class SuperStreamApi(
         }
 
         if (parentId == null && filesAreNotEmpty) {
-            val subDirectoryId = sharedResources.files!!.first().fid
+            val subDirectoryId = sharedResources.files.first().fid
             parentId = withIOContext {
                 fetchSubDirectorySeasonId(subDirectoryId, season, shareKey)
             }
@@ -402,8 +402,7 @@ class SuperStreamApi(
         return client.request(
             url = playerUrl,
             headers = (humanizedHeaders + mapOf("Cookie" to "ui=$token")).toHeaders()
-        ).execute().body?.string()
-            ?: throw Exception("[$PROVIDER_NAME] Failed to fetch player content.")
+        ).execute().body.string()
     }
 
     private fun extractPlayerData(player: String): Triple<String?, String?, String?> {
