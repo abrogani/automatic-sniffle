@@ -72,3 +72,7 @@ internal fun Element.toSlidePartialMedia(
         homePage = hrefLink.toAbsoluteUrl(baseUrl),
     )
 }
+
+/** The movie title from `h1.bd-hd`: its own text, excluding the year `<span>`. Null if absent or blank. */
+internal fun Element.parseMovieTitle(): String? =
+    select("h1.bd-hd").first()?.ownText()?.trim()?.takeIf { it.isNotEmpty() }
