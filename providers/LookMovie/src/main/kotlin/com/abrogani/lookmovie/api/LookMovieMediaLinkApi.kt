@@ -8,6 +8,7 @@ import com.abrogani.lookmovie.dto.MovieStorageDto
 import com.abrogani.lookmovie.dto.ShowStorageDto
 import com.abrogani.lookmovie.extensions.fromJson
 import com.abrogani.lookmovie.extensions.parseStorage
+import com.abrogani.lookmovie.extensions.toEpochMillis
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
 import com.flixclusive.core.util.network.okhttp.WebViewInterceptor.Companion.addWebViewInterceptor
 import com.flixclusive.core.util.network.okhttp.request
@@ -111,7 +112,7 @@ class LookMovieMediaLinkApi(
             cookies = CookieManager.getInstance().getCookie(videoUrl)
         )
 
-        createMediaLinks(access, Flag.Expires(expiresOn = storage.expires), onLinkFound)
+        createMediaLinks(access, Flag.Expires(expiresOn = storage.expires.toEpochMillis()), onLinkFound)
     }
 
     private suspend fun getShowLinks(
@@ -141,7 +142,7 @@ class LookMovieMediaLinkApi(
             cookies = CookieManager.getInstance().getCookie(playUrl)
         )
 
-        createMediaLinks(access, Flag.Expires(expiresOn = expires), onLinkFound)
+        createMediaLinks(access, Flag.Expires(expiresOn = expires.toEpochMillis()), onLinkFound)
     }
 
     suspend fun destroy() {
