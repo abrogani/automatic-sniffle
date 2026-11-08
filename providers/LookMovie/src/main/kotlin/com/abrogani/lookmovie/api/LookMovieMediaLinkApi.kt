@@ -9,7 +9,6 @@ import com.abrogani.lookmovie.dto.ShowStorageDto
 import com.abrogani.lookmovie.extensions.fromJson
 import com.abrogani.lookmovie.extensions.parseStorage
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
-import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.network.okhttp.WebViewInterceptor.Companion.addWebViewInterceptor
 import com.flixclusive.core.util.network.okhttp.request
 import com.flixclusive.model.media.MediaMetadata
@@ -186,19 +185,14 @@ class LookMovieMediaLinkApi(
         ).execute().fromJson()
     }
 
-    private suspend fun createMediaLinks(
+    private fun createMediaLinks(
         access: MovieAccessResponseDto,
         expiryFlag: Flag,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        access.subtitles.mapAsync {
-            onLinkFound(
-                Subtitle(
-                    language = it.language,
-                    url = BASE_URL + it.file,
-                )
-            )
-        }
+        access.subtitles.mapNotNull { subtitle ->
+            subtitle.path?.let { Subtitle(language = subtitle.language, url = BASE_URL + it) }
+        }.forEach(onLinkFound)
 
         access.streams.forEach { (quality, link) ->
             link?.let {

@@ -1,6 +1,8 @@
 package com.abrogani.lookmovie
 
+import com.abrogani.lookmovie.dto.MovieAccessResponseDto
 import com.abrogani.lookmovie.dto.ShowStorageDto
+import com.abrogani.lookmovie.extensions.fromJson
 import com.abrogani.lookmovie.extensions.extractStorageObject
 import com.abrogani.lookmovie.extensions.parseStorage
 import com.abrogani.lookmovie.extensions.toShowPartialMedia
@@ -82,5 +84,19 @@ class LookMovieParsingTest {
         expectThat(slides.first().title).isEqualTo("Possible Love")
         expectThat(slides.first().type).isEqualTo(MediaType.MOVIE)
         expectThat(slides.first().rating).isEqualTo(8.1)
+    }
+
+    @Test
+    fun `subtitles whose file is an array are skipped instead of failing`() {
+        val json = """
+            {"streams":{"480":"https://x.test/a.m3u8"},"subtitles":[
+              {"language":"English","file":"/captions/a.vtt"},
+              {"language":"Ukrainian","file":[13024732,"12147840","uk","Name",null]}
+            ]}
+        """.trimIndent()
+
+        val access = fromJson<MovieAccessResponseDto>(json)
+
+        expectThat(access.subtitles.map { it.path }).isEqualTo(listOf("/captions/a.vtt", null))
     }
 }
