@@ -4,6 +4,7 @@ import com.abrogani.lookmovie.dto.EpisodeListResponseDto
 import com.abrogani.lookmovie.dto.ShowStorageDto
 import com.abrogani.lookmovie.extensions.fetch
 import com.abrogani.lookmovie.extensions.fromJson
+import com.abrogani.lookmovie.extensions.parseMovieTitle
 import com.abrogani.lookmovie.extensions.parseStorage
 import com.abrogani.lookmovie.extensions.toAbsoluteUrl
 import com.abrogani.lookmovie.extensions.toPartialMedia
@@ -132,7 +133,7 @@ class LookMovieMetadataApi(
 
         // Extract basic movie information
         val titleElement = document.select("h1.bd-hd").first()
-        val title = titleElement?.text()?.substringBefore(" ")?.trim() ?: media.title
+        val title = document.parseMovieTitle() ?: media.title
         val year = titleElement?.select("span")?.text()?.toIntOrNull()
 
         // Extract rating
