@@ -1,7 +1,9 @@
 package com.abrogani.lookmovie
 
 import android.content.Context
-import com.abrogani.lookmovie.api.LookMovieApi
+import com.abrogani.lookmovie.api.LookMovieCatalogApi
+import com.abrogani.lookmovie.api.LookMovieMetadataApi
+import com.abrogani.lookmovie.api.LookMovieSearchApi
 import com.abrogani.lookmovie.api.LookMovieMediaLinkApi
 import com.flixclusive.provider.FlixclusiveProvider
 import com.flixclusive.provider.ProviderPlugin
@@ -15,22 +17,24 @@ import okhttp3.OkHttpClient
 class LookMovie : ProviderPlugin() {
     private val client by lazy { OkHttpClient() }
 
-    // `manifest` is injected after construction, so this must stay lazy.
-    private val api by lazy { LookMovieApi(client = client, providerId = id) }
+    // `manifest` is injected after construction, so these must stay lazy.
+    private val catalogApi by lazy { LookMovieCatalogApi(client = client, providerId = id) }
+    private val searchApi by lazy { LookMovieSearchApi(client = client, providerId = id) }
+    private val metadataApi by lazy { LookMovieMetadataApi(client = client, providerId = id) }
 
     private var mediaLinkApi: LookMovieMediaLinkApi? = null
 
-    override suspend fun getCatalogApi(context: Context): CatalogProviderApi = api
+    override suspend fun getCatalogApi(context: Context): CatalogProviderApi = catalogApi
 
-    override suspend fun getSearchApi(context: Context): SearchProviderApi = api
+    override suspend fun getSearchApi(context: Context): SearchProviderApi = searchApi
 
-    override suspend fun getMetadataApi(context: Context): MediaMetadataProviderApi = api
+    override suspend fun getMetadataApi(context: Context): MediaMetadataProviderApi = metadataApi
 
     override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi =
         mediaLinkApi ?: LookMovieMediaLinkApi(
             context = context,
             client = client,
-            metadataApi = api,
+            metadataApi = metadataApi,
         ).also { mediaLinkApi = it }
 
     override suspend fun onUnload(context: Context) {

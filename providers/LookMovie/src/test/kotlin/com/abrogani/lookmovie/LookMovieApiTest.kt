@@ -1,6 +1,8 @@
 package com.abrogani.lookmovie
 
-import com.abrogani.lookmovie.api.LookMovieApi
+import com.abrogani.lookmovie.api.LookMovieCatalogApi
+import com.abrogani.lookmovie.api.LookMovieMetadataApi
+import com.abrogani.lookmovie.api.LookMovieSearchApi
 import com.abrogani.lookmovie.api.VIDEO_URL_KEY
 import com.flixclusive.model.media.common.MediaType
 import kotlinx.coroutines.test.runTest
@@ -15,19 +17,21 @@ import strikt.assertions.isNotEmpty
 import strikt.assertions.isNotNull
 
 class LookMovieApiTest {
-    private lateinit var lookMovieApi: LookMovieApi
+    private lateinit var catalogApi: LookMovieCatalogApi
+    private lateinit var searchApi: LookMovieSearchApi
+    private lateinit var metadataApi: LookMovieMetadataApi
 
     @Before
     fun setUp() {
-        lookMovieApi = LookMovieApi(
-            client = OkHttpClient(),
-            providerId = "lookmovie"
-        )
+        val client = OkHttpClient()
+        catalogApi = LookMovieCatalogApi(client = client, providerId = "lookmovie")
+        searchApi = LookMovieSearchApi(client = client, providerId = "lookmovie")
+        metadataApi = LookMovieMetadataApi(client = client, providerId = "lookmovie")
     }
 
     @Test
     fun `search should return valid results for Parasite query`() = runTest {
-        val searchResponse = lookMovieApi.search(
+        val searchResponse = searchApi.search(
             query = "Parasite",
             page = 1,
         )
@@ -66,7 +70,7 @@ class LookMovieApiTest {
 
     @Test
     fun `search should handle pagination correctly`() = runTest {
-        val firstPage = lookMovieApi.search(
+        val firstPage = searchApi.search(
             query = "action",
             page = 1,
         )
@@ -84,13 +88,13 @@ class LookMovieApiTest {
 
     @Test
     fun `getMovie should return complete movie information`() = runTest {
-        val searchResponse = lookMovieApi.search(
+        val searchResponse = searchApi.search(
             query = "Parasite",
             page = 1,
         )
 
         val firstResult = searchResponse.results.first()
-        val metadata = lookMovieApi.getMovie(firstResult)
+        val metadata = metadataApi.getMovie(firstResult)
 
         expectThat(metadata) {
             get { id }.isEqualTo(firstResult.id)
@@ -132,14 +136,14 @@ class LookMovieApiTest {
 
     @Test
     fun `getMovie should handle movies with minimal information`() = runTest {
-        val searchResponse = lookMovieApi.search(
+        val searchResponse = searchApi.search(
             query = "test",
             page = 1,
         )
 
         if (searchResponse.results.isNotEmpty()) {
             val lastResult = searchResponse.results.last()
-            val metadata = lookMovieApi.getMovie(lastResult)
+            val metadata = metadataApi.getMovie(lastResult)
 
             expectThat(metadata) {
                 get { id }.isNotEmpty()
@@ -162,8 +166,8 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should return valid movies from catalog`() = runTest {
-        val catalog = lookMovieApi.getCatalogs().first()
-        val catalogResponse = lookMovieApi.getCatalogItems(
+        val catalog = catalogApi.getCatalogs().first()
+        val catalogResponse = catalogApi.getCatalogItems(
             catalog = catalog,
             page = 1
         )
@@ -202,9 +206,9 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should handle pagination correctly`() = runTest {
-        val catalog = lookMovieApi.getCatalogs().first()
+        val catalog = catalogApi.getCatalogs().first()
 
-        val firstPage = lookMovieApi.getCatalogItems(
+        val firstPage = catalogApi.getCatalogItems(
             catalog = catalog,
             page = 1
         )
@@ -215,7 +219,7 @@ class LookMovieApiTest {
             get { hasNextPage }.isEqualTo(true)
         }
 
-        val secondPage = lookMovieApi.getCatalogItems(
+        val secondPage = catalogApi.getCatalogItems(
             catalog = catalog,
             page = 2
         )
@@ -243,8 +247,8 @@ class LookMovieApiTest {
 
     @Test
     fun `getCatalogItems should parse pagination text correctly`() = runTest {
-        val catalog = lookMovieApi.getCatalogs().first()
-        val catalogResponse = lookMovieApi.getCatalogItems(
+        val catalog = catalogApi.getCatalogs().first()
+        val catalogResponse = catalogApi.getCatalogItems(
             catalog = catalog,
             page = 1
         )
@@ -264,10 +268,10 @@ class LookMovieApiTest {
 
     @Test
     fun `catalogs property should return available catalogs`() = runTest {
-        val catalogs = lookMovieApi.getCatalogs()
+        val catalogs = catalogApi.getCatalogs()
 
         expectThat(catalogs) {
-            hasSize(1)
+            hasSize(3)
             get { first().name }.isEqualTo("Latest Movies")
             get { first().canPaginate }.isEqualTo(true)
             get { first().providerId }.isEqualTo("lookmovie")
@@ -283,5 +287,46 @@ class LookMovieApiTest {
             println("  Image: ${catalog.image}")
             println()
         }
+    }
+
+    @Test
+    fun `search with the shows filter returns shows`() = runTest {
+        val showsFilters = searchApi.filters.also {
+            (it.flatten().first() as com.flixclusive.provider.filter.Filter.Select<*>).state = 1
+        }
+
+        val response = searchApi.search(query = "dexter", page = 1, filters = showsFilters)
+
+        expectThat(response.results).isNotEmpty()
+        expectThat(response.results.first().type).isEqualTo(MediaType.SHOW)
+    }
+
+    @Test
+    fun `catalogs return items`() = runTest {
+        val catalogs = catalogApi.getCatalogs()
+        expectThat(catalogs.map { it.name }).isEqualTo(listOf("Latest Movies", "What's hot", "Latest Shows"))
+
+        catalogs.forEach { catalog ->
+            val items = catalogApi.getCatalogItems(catalog, 1).results
+            expectThat(items).isNotEmpty()
+            expectThat(items.map { it.id }.distinct().size).isEqualTo(items.size)
+        }
+    }
+
+    @Test
+    fun `getShow returns seasons with episode ids`() = runTest {
+        val partial = searchApi.search(
+            query = "dexter",
+            page = 1,
+            filters = searchApi.filters.also {
+                (it.flatten().first() as com.flixclusive.provider.filter.Filter.Select<*>).state = 1
+            }
+        ).results.first { it.title == "Dexter" }
+
+        val show = metadataApi.getShow(partial)
+
+        expectThat(show.seasons).isNotEmpty()
+        expectThat(show.totalEpisodes).isGreaterThan(0)
+        expectThat(metadataApi.getCachedEpisodeId(show.id, 1, 1)).isNotNull()
     }
 }

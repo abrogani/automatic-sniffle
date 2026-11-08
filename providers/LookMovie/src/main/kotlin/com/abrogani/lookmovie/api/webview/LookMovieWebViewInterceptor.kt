@@ -9,12 +9,13 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import com.abrogani.lookmovie.extensions.extractStorageObject
+import com.abrogani.lookmovie.extensions.fromJson
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
 import com.flixclusive.core.util.log.verboseLog
 import com.flixclusive.core.util.network.okhttp.UserAgentManager
 import com.flixclusive.core.util.network.okhttp.WebViewInterceptor
 import com.flixclusive.core.util.webview.WebViewDriverManager
-import com.google.gson.Gson
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -30,27 +31,25 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * An [okhttp3.OkHttpClient] interceptor that proceeds with the plain request first. If the response
- * has no `movie_storage` property, it loads the requested page in a visible WebView
- * and returns the rendered HTML once it contains the property.
+ * has no `window['<storageKey>']` property (e.g., `movie_storage`), it loads the page in a visible WebView
+ * and returns the rendered HTML once it has the property.
  *
- * If the site shows a captcha, the user can solve it in the WebView; the interceptor keeps
- * waiting until the page redirects back with the `movie_storage` property or [timeoutMillis] elapses.
+ * If the site shows a captcha, the user can solve it in the WebView. The interceptor keeps
+ * waiting until the page redirects back with the property or [timeoutMillis] elapses.
  * */
 @SuppressLint("ViewConstructor", "SetJavaScriptEnabled")
 class LookMovieWebViewInterceptor(
     private val appContext: Context,
+    private val storageKey: String,
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
 ) : WebViewInterceptor(appContext) {
-    private val gson = Gson()
-    private val userAgent = UserAgentManager.getRandomUserAgent()
-
     override val name: String = "LookMovie Captcha Solver"
     override val isHeadless: Boolean = false
 
     init {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
-        settings.userAgentString = userAgent
+        settings.userAgentString = UserAgentManager.getRandomUserAgent()
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -61,7 +60,7 @@ class LookMovieWebViewInterceptor(
         val contentType = plainResponse.body.contentType()
         val plainHtml = plainResponse.use { it.body.string() }
 
-        if (plainHtml.contains(MOVIE_STORAGE_KEY)) {
+        if (extractStorageObject(plainHtml, storageKey) != null) {
             return plainResponse.newBuilder()
                 .body(plainHtml.toResponseBody(contentType))
                 .build()
@@ -74,7 +73,7 @@ class LookMovieWebViewInterceptor(
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            throw IOException("Timed out after ${timeoutMillis / 1000} seconds waiting for movie_storage", e)
+            throw IOException("Timed out after ${timeoutMillis / 1000} seconds waiting for $storageKey", e)
         }
 
         return Response.Builder()
@@ -127,8 +126,8 @@ class LookMovieWebViewInterceptor(
                         if (!continuation.isActive || result.isNullOrEmpty() || result == "null") return@evaluateJavascript
 
                         // evaluateJavascript returns a JSON-encoded string
-                        val html = runCatching { gson.fromJson(result, String::class.java) }.getOrNull()
-                        if (html?.contains(MOVIE_STORAGE_KEY) == true) {
+                        val html = runCatching { fromJson<String>(result) }.getOrNull()
+                        if (html != null && extractStorageObject(html, storageKey) != null) {
                             continuation.resume(html)
                         }
                     }
@@ -141,6 +140,5 @@ class LookMovieWebViewInterceptor(
 
     private companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 120_000L // 2 minutes
-        const val MOVIE_STORAGE_KEY = "movie_storage"
     }
 }

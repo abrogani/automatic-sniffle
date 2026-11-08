@@ -5,6 +5,9 @@ import android.webkit.CookieManager
 import com.abrogani.lookmovie.api.webview.LookMovieWebViewInterceptor
 import com.abrogani.lookmovie.dto.MovieAccessResponseDto
 import com.abrogani.lookmovie.dto.MovieStorageDto
+import com.abrogani.lookmovie.dto.ShowStorageDto
+import com.abrogani.lookmovie.extensions.fromJson
+import com.abrogani.lookmovie.extensions.parseStorage
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
 import com.flixclusive.core.util.coroutines.mapAsync
 import com.flixclusive.core.util.network.okhttp.WebViewInterceptor.Companion.addWebViewInterceptor
@@ -18,17 +21,15 @@ import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.capability.MediaLinkType
-import com.google.gson.Gson
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 
 class LookMovieMediaLinkApi(
     private val context: Context,
     private val client: OkHttpClient,
-    private val metadataApi: LookMovieApi,
+    private val metadataApi: LookMovieMetadataApi,
 ) : MediaLinkProviderApi {
-    private val gson = Gson()
-    private var webView: LookMovieWebViewInterceptor? = null
+    private var interceptor: LookMovieWebViewInterceptor? = null
 
     override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
 
@@ -37,17 +38,33 @@ class LookMovieMediaLinkApi(
         episode: Episode?,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        // TODO("Implement support for TV shows")
-        if (media.isShow) {
-            throw IllegalStateException("This provider does not support TV shows YET!")
+        try {
+            if (media.isShow) {
+                getShowLinks(
+                    media = media,
+                    episode = episode ?: throw IllegalArgumentException("Episode is required for TV shows"),
+                    onLinkFound = onLinkFound
+                )
+            } else {
+                getMovieLinks(media, onLinkFound)
+            }
+        } finally {
+            destroy()
         }
+    }
 
+    private suspend fun getMovieLinks(
+        media: MediaMetadata,
+        onLinkFound: (MediaLink) -> Unit
+    ) {
         val videoUrl = media.customProperties[VIDEO_URL_KEY]
             ?: metadataApi.getMovie(media.toPartialMedia()).customProperties[VIDEO_URL_KEY]
             ?: throw IllegalArgumentException("Video URL not found in media metadata")
 
         // TODO: Restore the cookie/captcha flow below once the WEB requires it again.
         //  For now, the movie_storage is extracted directly, with a WebView fallback.
+        //  LookMovieWebView (the captcha solver this used) was removed; see git history before the
+        //  "remove unused" cleanup if it's needed again.
         // try {
         //     // Step 1: Check if we already have valid cookies and can access movie_storage directly
         //     val existingCookies = CookieManager.getInstance().getCookie(videoUrl)
@@ -85,39 +102,52 @@ class LookMovieMediaLinkApi(
         //     throw IllegalStateException("Captcha solving timed out after ${CAPTCHA_TIMEOUT_MILLIS / 1000} seconds", e)
         // }
 
-        try {
-            // Step 1: Fetch the page. The interceptor falls back to a WebView
-            // if the plain response has no movie_storage.
-            val interceptor = withMainContext { LookMovieWebViewInterceptor(context) }
-            webView = interceptor
+        val html = fetchHtml(videoUrl, MOVIE_STORAGE_KEY)
+        val storage = parseStorage<MovieStorageDto>(html, MOVIE_STORAGE_KEY)
+            ?: throw IllegalStateException("$MOVIE_STORAGE_KEY not found in response")
 
-            val html = client
-                .addWebViewInterceptor(interceptor)
-                .request(url = videoUrl)
-                .execute()
-                .use { it.body.string() }
+        val access = getAccess(
+            url = "$BASE_URL/api/v1/security/movie-access" +
+                    "?id_movie=${storage.idMovie}&hash=${storage.hash}&expires=${storage.expires}",
+            cookies = CookieManager.getInstance().getCookie(videoUrl)
+        )
 
-            val movieStorage = parseMovieStorage(html)
-                ?: throw IllegalStateException("movie_storage not found in response")
+        createMediaLinks(access, Flag.Expires(expiresOn = storage.expires), onLinkFound)
+    }
 
-            // Step 2: Get movie access with hash and expires
-            val cookies = CookieManager.getInstance().getCookie(videoUrl)
-            val movieAccess = getMovieAccess(movieStorage, cookies)
+    private suspend fun getShowLinks(
+        media: MediaMetadata,
+        episode: Episode,
+        onLinkFound: (MediaLink) -> Unit
+    ) {
+        val playUrl = "$BASE_URL/shows/play/${media.id}"
+        val html = fetchHtml(playUrl, SHOW_STORAGE_KEY)
 
-            // Parse streams and create MediaLinks
-            createMediaLinks(
-                movieAccess = movieAccess,
-                expiryFlag = Flag.Expires(expiresOn = movieStorage.expires),
-                onLinkFound = onLinkFound
-            )
-        } finally {
-            destroy()
-        }
+        val storage = parseStorage<ShowStorageDto>(html, SHOW_STORAGE_KEY)
+            ?: throw IllegalStateException("$SHOW_STORAGE_KEY not found in response")
+        val hash = storage.hash ?: throw IllegalStateException("hash not found in $SHOW_STORAGE_KEY")
+        val expires = storage.expires ?: throw IllegalStateException("expires not found in $SHOW_STORAGE_KEY")
+
+        val episodeId = metadataApi.getCachedEpisodeId(media.id, episode.season, episode.number)
+            ?: storage.seasons.orEmpty().filterNotNull()
+                .firstOrNull {
+                    it.season?.toIntOrNull() == episode.season && it.episode?.toIntOrNull() == episode.number
+                }
+                ?.idEpisode?.toString()
+            ?: episode.id
+
+        val access = getAccess(
+            url = "$BASE_URL/api/v1/security/episode-access" +
+                    "?id_episode=$episodeId&hash=$hash&expires=$expires",
+            cookies = CookieManager.getInstance().getCookie(playUrl)
+        )
+
+        createMediaLinks(access, Flag.Expires(expiresOn = expires), onLinkFound)
     }
 
     suspend fun destroy() {
-        val driver = webView ?: return
-        webView = null
+        val driver = interceptor ?: return
+        interceptor = null
         withMainContext { driver.destroy() }
     }
 
@@ -130,46 +160,47 @@ class LookMovieMediaLinkApi(
         homePage = homePage,
     )
 
-    private fun parseMovieStorage(html: String): MovieStorageDto? {
-        // Extract movie_storage JavaScript object
-        val storageRegex = Regex("window\\['movie_storage']\\s*=\\s*(\\{[^}]+\\})")
-        val match = storageRegex.find(html) ?: return null
+    /**
+     * Fetches [url] through a [LookMovieWebViewInterceptor], which only falls back
+     * to a WebView if the plain response doesn't have [storageKey].
+     * */
+    private suspend fun fetchHtml(url: String, storageKey: String): String {
+        val webViewInterceptor = withMainContext { LookMovieWebViewInterceptor(context, storageKey) }
+        interceptor = webViewInterceptor
 
-        return gson.fromJson(match.groupValues[1], MovieStorageDto::class.java)
+        return client
+            .addWebViewInterceptor(webViewInterceptor)
+            .request(url = url)
+            .execute()
+            .use { it.body.string() }
     }
 
-    private fun getMovieAccess(movieStorage: MovieStorageDto, cookies: String?): MovieAccessResponseDto {
-        val accessUrl = "${metadataApi.baseUrl}/api/v1/security/movie-access" +
-                "?id_movie=${movieStorage.idMovie}" +
-                "&hash=${movieStorage.hash}" +
-                "&expires=${movieStorage.expires}"
-
+    private fun getAccess(url: String, cookies: String?): MovieAccessResponseDto {
         val headers = cookies?.takeIf { it.isNotEmpty() }
             ?.let { mapOf("Cookie" to it) }
             .orEmpty()
 
-        val responseBody = client.request(
-            url = accessUrl,
+        return client.request(
+            url = url,
             headers = headers.toHeaders()
-        ).execute().use { it.body.string() }
-        return gson.fromJson(responseBody, MovieAccessResponseDto::class.java)
+        ).execute().fromJson()
     }
 
     private suspend fun createMediaLinks(
-        movieAccess: MovieAccessResponseDto,
+        access: MovieAccessResponseDto,
         expiryFlag: Flag,
         onLinkFound: (MediaLink) -> Unit
     ) {
-        movieAccess.subtitles.mapAsync {
+        access.subtitles.mapAsync {
             onLinkFound(
                 Subtitle(
                     language = it.language,
-                    url = metadataApi.baseUrl + it.file,
+                    url = BASE_URL + it.file,
                 )
             )
         }
 
-        movieAccess.streams.forEach { (quality, link) ->
+        access.streams.forEach { (quality, link) ->
             link?.let {
                 onLinkFound(
                     Stream(

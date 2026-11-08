@@ -1,12 +1,12 @@
 package com.abrogani.lookmovie.dto
 
-data class MovieAccessResponseDto(
+/** Response of both the `movie-access` and `episode-access` endpoints. */
+internal data class MovieAccessResponseDto(
     val streams: Map<String, String?>,
     val subtitles: List<SubtitleDto>,
 )
 
-data class SubtitleDto(
+internal data class SubtitleDto(
     val language: String,
     val file: String,
-    val kind: String
 )
