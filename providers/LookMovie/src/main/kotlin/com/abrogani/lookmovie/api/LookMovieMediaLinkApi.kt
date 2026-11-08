@@ -2,15 +2,13 @@ package com.abrogani.lookmovie.api
 
 import android.content.Context
 import android.webkit.CookieManager
-import android.widget.Toast
-import com.abrogani.lookmovie.api.webview.LookMovieWebView
+import com.abrogani.lookmovie.api.webview.LookMovieWebViewInterceptor
 import com.abrogani.lookmovie.dto.MovieAccessResponseDto
 import com.abrogani.lookmovie.dto.MovieStorageDto
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
 import com.flixclusive.core.util.coroutines.mapAsync
-import com.flixclusive.core.util.exception.safeCall
+import com.flixclusive.core.util.network.okhttp.WebViewInterceptor.Companion.addWebViewInterceptor
 import com.flixclusive.core.util.network.okhttp.request
-import com.flixclusive.core.util.webview.WebViewDriverManager
 import com.flixclusive.model.media.MediaMetadata
 import com.flixclusive.model.media.PartialMedia
 import com.flixclusive.model.media.common.tv.Episode
@@ -21,8 +19,6 @@ import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.capability.MediaLinkType
 import com.google.gson.Gson
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 
@@ -32,13 +28,9 @@ class LookMovieMediaLinkApi(
     private val metadataApi: LookMovieApi,
 ) : MediaLinkProviderApi {
     private val gson = Gson()
-    private var webView: LookMovieWebView? = null
+    private var webView: LookMovieWebViewInterceptor? = null
 
     override val supportedLinkTypes = setOf(MediaLinkType.STREAMS, MediaLinkType.SUBTITLES)
-
-    private companion object {
-        const val CAPTCHA_TIMEOUT_MILLIS = 120_000L // 2 minutes
-    }
 
     override suspend fun getLinks(
         media: MediaMetadata,
@@ -54,39 +46,62 @@ class LookMovieMediaLinkApi(
             ?: metadataApi.getMovie(media.toPartialMedia()).customProperties[VIDEO_URL_KEY]
             ?: throw IllegalArgumentException("Video URL not found in media metadata")
 
+        // TODO: Restore the cookie/captcha flow below once the WEB requires it again.
+        //  For now, the movie_storage is extracted directly, with a WebView fallback.
+        // try {
+        //     // Step 1: Check if we already have valid cookies and can access movie_storage directly
+        //     val existingCookies = CookieManager.getInstance().getCookie(videoUrl)
+        //     val existingStorage = if (existingCookies?.isNotEmpty() == true) {
+        //         safeCall { extractMovieStorage(videoUrl, existingCookies) }
+        //     } else {
+        //         null
+        //     }
+        //
+        //     val cookies: String
+        //     val movieStorage: MovieStorageDto
+        //     if (existingStorage != null) {
+        //         cookies = existingCookies!!
+        //         movieStorage = existingStorage
+        //     } else {
+        //         withMainContext {
+        //             Toast.makeText(context, "Please solve the captcha to continue", Toast.LENGTH_LONG).show()
+        //         }
+        //
+        //         // Need to solve captcha with timeout
+        //         cookies = withTimeout(CAPTCHA_TIMEOUT_MILLIS.milliseconds) {
+        //             withMainContext {
+        //                 val driver = LookMovieWebView(context).also { webView = it }
+        //                 WebViewDriverManager.register(driver)
+        //                 driver.solveCaptcha(videoUrl)
+        //             }
+        //         }
+        //
+        //         destroy()
+        //         movieStorage = extractMovieStorage(videoUrl, cookies)
+        //     }
+        //     ...
+        // } catch (e: TimeoutCancellationException) {
+        //     destroy()
+        //     throw IllegalStateException("Captcha solving timed out after ${CAPTCHA_TIMEOUT_MILLIS / 1000} seconds", e)
+        // }
+
         try {
-            // Step 1: Check if we already have valid cookies and can access movie_storage directly
-            val existingCookies = CookieManager.getInstance().getCookie(videoUrl)
-            val existingStorage = if (existingCookies?.isNotEmpty() == true) {
-                safeCall { extractMovieStorage(videoUrl, existingCookies) }
-            } else {
-                null
-            }
+            // Step 1: Fetch the page. The interceptor falls back to a WebView
+            // if the plain response has no movie_storage.
+            val interceptor = withMainContext { LookMovieWebViewInterceptor(context) }
+            webView = interceptor
 
-            val cookies: String
-            val movieStorage: MovieStorageDto
-            if (existingStorage != null) {
-                cookies = existingCookies!!
-                movieStorage = existingStorage
-            } else {
-                withMainContext {
-                    Toast.makeText(context, "Please solve the captcha to continue", Toast.LENGTH_LONG).show()
-                }
+            val html = client
+                .addWebViewInterceptor(interceptor)
+                .request(url = videoUrl)
+                .execute()
+                .use { it.body.string() }
 
-                // Need to solve captcha with timeout
-                cookies = withTimeout(CAPTCHA_TIMEOUT_MILLIS) {
-                    withMainContext {
-                        val driver = LookMovieWebView(context).also { webView = it }
-                        WebViewDriverManager.register(driver)
-                        driver.solveCaptcha(videoUrl)
-                    }
-                }
+            val movieStorage = parseMovieStorage(html)
+                ?: throw IllegalStateException("movie_storage not found in response")
 
-                destroy()
-                movieStorage = extractMovieStorage(videoUrl, cookies)
-            }
-
-            // Step 4: Get movie access with hash and expires
+            // Step 2: Get movie access with hash and expires
+            val cookies = CookieManager.getInstance().getCookie(videoUrl)
             val movieAccess = getMovieAccess(movieStorage, cookies)
 
             // Parse streams and create MediaLinks
@@ -95,9 +110,8 @@ class LookMovieMediaLinkApi(
                 expiryFlag = Flag.Expires(expiresOn = movieStorage.expires),
                 onLinkFound = onLinkFound
             )
-        } catch (e: TimeoutCancellationException) {
+        } finally {
             destroy()
-            throw IllegalStateException("Captcha solving timed out after ${CAPTCHA_TIMEOUT_MILLIS / 1000} seconds", e)
         }
     }
 
@@ -116,39 +130,28 @@ class LookMovieMediaLinkApi(
         homePage = homePage,
     )
 
-    private fun extractMovieStorage(videoUrl: String, cookies: String): MovieStorageDto {
-        val headers = mapOf("Cookie" to cookies)
-
-        val response = client.request(
-            url = videoUrl,
-            headers = headers.toHeaders()
-        ).execute()
-
-        val html = response.body.string()
-
+    private fun parseMovieStorage(html: String): MovieStorageDto? {
         // Extract movie_storage JavaScript object
         val storageRegex = Regex("window\\['movie_storage']\\s*=\\s*(\\{[^}]+\\})")
-        val match = storageRegex.find(html)
-            ?: throw IllegalStateException("movie_storage not found in response")
+        val match = storageRegex.find(html) ?: return null
 
-        val jsonString = match.groupValues[1]
-        return gson.fromJson(jsonString, MovieStorageDto::class.java)
+        return gson.fromJson(match.groupValues[1], MovieStorageDto::class.java)
     }
 
-    private fun getMovieAccess(movieStorage: MovieStorageDto, cookies: String): MovieAccessResponseDto {
+    private fun getMovieAccess(movieStorage: MovieStorageDto, cookies: String?): MovieAccessResponseDto {
         val accessUrl = "${metadataApi.baseUrl}/api/v1/security/movie-access" +
                 "?id_movie=${movieStorage.idMovie}" +
                 "&hash=${movieStorage.hash}" +
                 "&expires=${movieStorage.expires}"
 
-        val headers = mapOf("Cookie" to cookies)
+        val headers = cookies?.takeIf { it.isNotEmpty() }
+            ?.let { mapOf("Cookie" to it) }
+            .orEmpty()
 
-        val response = client.request(
+        val responseBody = client.request(
             url = accessUrl,
             headers = headers.toHeaders()
-        ).execute()
-
-        val responseBody = response.body.string()
+        ).execute().use { it.body.string() }
         return gson.fromJson(responseBody, MovieAccessResponseDto::class.java)
     }
 
