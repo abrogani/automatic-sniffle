@@ -1,11 +1,12 @@
 name: Build
 
 # https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#concurrency
-concurrency: 
+concurrency:
   group: "build"
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -33,7 +34,7 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3.2.2
+        uses: android-actions/setup-android@v4.0.4
 
       - name: Initialize Secrets
         env:
@@ -103,7 +104,6 @@ jobs:
           echo GojoAPI=$GojoAPI >> local.properties
           echo ANICHI_API=$ANICHI_API >> local.properties
           echo CatflixAPI=$CatflixAPI >> local.properties
-          
 
       - name: Initialize cloudstream.jar
         run: |
