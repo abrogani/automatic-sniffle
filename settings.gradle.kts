@@ -42,6 +42,7 @@ include(
     "SuperStream",
     "FlixHQ",
     "LookMovie",
+    "Torrent",
 )
 
 rootProject.children.forEach {
