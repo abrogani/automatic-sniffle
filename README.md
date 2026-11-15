@@ -8,3 +8,4 @@
 | LookMovie | 🔵 BETA |
 | Stremio | 🟢 OK |
 | StreamPlay | 🟢 OK |
+| Torrent | 🔵 BETA |
