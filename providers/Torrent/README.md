@@ -29,7 +29,8 @@ cloudstream's gomobile build of torrserver, `com.github.recloudstream:torrentser
   (`classes.jar` from the aar, sha256 `792029709516fde134cd8c2eead8da2aa6c9eca27185107172917d088e3c3b22`, build-tools 36.1.0)
 - this fork needs an explicit `go.Seq.load()`, static init doesn't load the lib
 - engine runs on a random port, only started on first play
-- go runtime loads once per process and can't be restarted. so: never stop it, and keep port / loaded / failed flags in system properties so a reloaded copy of the provider (new classloader) reuses it. the bindings class is stashed in system properties too so a reloaded copy can still call `addTrackers`
+- the `.so` / go runtime loads once per process and never unloads. the server itself restarts fine though: `stopTorrentServer` closes http, the bt client and the db, and the next `startTorrentServer` reopens them (checked on device). that's what "stop engine" does
+- port / loaded / failed flags live in system properties so a reloaded copy of the provider (new classloader) finds the running engine. the bindings class is stashed there too so a reloaded copy can still stop it and call `addTrackers`
 - `startTorrentServer` opens its bbolt db before the port check and leaves it open on failure, so after one `-1` every retry hangs on the lock. we give up and tell the user to restart the app
 - `/echo` must return exactly `CloudStream torrserver`. we only reuse a port this process started
 - file ids are 0-based, info-dict order, and `id` is omitted for file 0 (`omitempty`). missing id = 0
@@ -39,7 +40,7 @@ cloudstream's gomobile build of torrserver, `com.github.recloudstream:torrentser
 ## settings
 
 - link proxy port + on/off for interception
-- download / remove engine, stop all torrents
+- download / remove engine, stop engine, stop all torrents. remove stops it first
 - all of torrserver's `BTSets` that do something in this build: cache size (MB, per torrent), read-ahead, preload, disk cache (always `cacheDir/torrent/cache`), remove cache on drop, idle timeout, connections, up/down limits (KiB/s), peer port, encryption, ipv6, tcp/utp/upnp/dht/pex/upload toggles, retracker mode + tracker list, debug. `EnableDLNA` and `FriendlyName` exist but do nothing here so they're hidden
 - stored in the plugin datastore, not just the engine's `config.db` (that lives in cacheDir and can get wiped). re-applied on every engine start if they differ
 - `set` replaces the whole struct, so it's always get → merge → set. it also drops every torrent and reconnects, so applying while something plays interrupts it
@@ -58,7 +59,8 @@ cloudstream's gomobile build of torrserver, `com.github.recloudstream:torrentser
 - torrserver listens on all interfaces with no auth and cors `*`. while it runs, anything on the same wifi (or a web page on the phone) can hit it. can't fix without our own engine build (one line in `server.go`/`web/server.go` to bind 127.0.0.1)
 - cached raw magnets from before the engine was installed stick around until they expire (only the ones we pass through get the 1h expiry)
 - interception is all reflection on host internals. checked against flixclusive 3.0.1. a host update can break it, the settings screen says so when it does
-- removing the provider doesn't delete the engine files, the host gives no uninstall signal (onUnload is the same for disable)
+- removing the provider doesn't delete the engine files, the host gives no uninstall signal (onUnload is the same for disable). use "remove engine" first
+- saw the engine file go missing twice on the emulator after deploying new builds, couldn't reproduce after. nothing in here or the host deletes it without logging. if it happens, it just shows "not installed" again
 
 ## testing
 

@@ -121,27 +121,64 @@ private fun EngineSection(
         }
     }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (installed) {
-            OutlinedButton(onClick = { backgroundScope.launch { engine.remove() } }) {
-                Text("Remove engine")
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    fun run(action: suspend () -> String) {
+        busy = true
+        message = ""
+        backgroundScope.launch {
+            message = try {
+                action()
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                e.message ?: e.javaClass.simpleName
+            } finally {
+                busy = false
             }
-            OutlinedButton(
-                onClick = { backgroundScope.launch { engine.dropAll() } },
-                enabled = state is EngineState.Running,
-            ) { Text("Stop all torrents") }
-        } else {
-            Button(
-                onClick = { backgroundScope.launch { engine.install() } },
-                enabled = state !is EngineState.Installing,
-            ) { Text("Download engine") }
         }
+    }
+
+    val running = state is EngineState.Running
+
+    if (installed) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(
+                onClick = {
+                    run {
+                        when (val dropped = engine.dropAll()) {
+                            0 -> "No torrents were active."
+                            1 -> "Stopped 1 torrent."
+                            else -> "Stopped $dropped torrents."
+                        }
+                    }
+                },
+                enabled = !busy && running,
+            ) { Text("Stop all torrents") }
+            OutlinedButton(
+                onClick = { run { engine.stop(); "Engine stopped. It starts again when you play a torrent link." } },
+                enabled = !busy && running,
+            ) { Text("Stop engine") }
+        }
+        OutlinedButton(
+            onClick = { run { engine.remove(); "Engine removed." } },
+            enabled = !busy,
+        ) { Text("Remove engine") }
+    } else {
+        Button(
+            onClick = { backgroundScope.launch { engine.install() } },
+            enabled = state !is EngineState.Installing,
+        ) { Text("Download engine") }
+    }
+
+    if (message.isNotEmpty()) {
+        Text(text = message, style = MaterialTheme.typography.bodyMedium)
     }
 
     Text(
         text = "While it runs, the engine's own port is reachable from other devices on your network, and it has no " +
-            "password. They could see or stop what it is playing. It only starts when you play a torrent link and " +
-            "stops when the app closes.",
+            "password. They could see or stop what it is playing. It only starts when you play a torrent link. " +
+            "Stop it here when you're done.",
         style = MaterialTheme.typography.bodySmall,
     )
 }
