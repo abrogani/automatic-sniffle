@@ -15,12 +15,6 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.X509TrustManager
 
-/**
- * The host targets SDK 36 without a network security config, so its OkHttp (which the player streams
- * through) refuses plain HTTP everywhere, loopback included. OkHttp asks [Platform.get] on every
- * connection, so swapping in a delegating platform lets the player reach the local engine while
- * every other host keeps the app's policy.
- */
 internal object LoopbackCleartext {
     @Volatile
     private var installed: LoopbackPlatform? = null
@@ -33,7 +27,7 @@ internal object LoopbackCleartext {
             val current = Platform.get()
             if (current is LoopbackPlatform) return
 
-            val wrapper = LoopbackPlatform(current)
+            val wrapper = LoopbackPlatform(innermost(current))
             Platform.resetForTests(wrapper)
             installed = wrapper
             infoLog("[Torrent] Allowed cleartext HTTP to loopback")
@@ -47,7 +41,6 @@ internal object LoopbackCleartext {
         val wrapper = installed ?: return
         installed = null
 
-        // Another plugin may have wrapped us since; only restore what we replaced.
         if (Platform.get() === wrapper) {
             runCatching { Platform.resetForTests(wrapper.delegate) }
                 .onFailure { warnLog("[Torrent] Could not restore OkHttp's platform: $it") }
@@ -56,11 +49,36 @@ internal object LoopbackCleartext {
 
     internal fun isLoopback(hostname: String): Boolean {
         val host = hostname.removePrefix("[").removeSuffix("]").lowercase()
-        return host == "localhost" || host == "::1" || host.startsWith("127.")
+        if (host == "localhost" || host == "::1") return true
+        val octets = host.split('.')
+        return octets.size == 4 &&
+            octets[0] == "127" &&
+            octets.all { octet -> octet.length in 1..3 && octet.all(Char::isDigit) && octet.toInt() <= 255 }
     }
+
+    internal fun isLoopbackWrapper(platform: Any): Boolean = platform.javaClass.name == WRAPPER_CLASS_NAME
+
+    internal fun innermost(platform: Platform): Platform {
+        var current = platform
+        repeat(MAX_UNWRAP_DEPTH) {
+            if (!isLoopbackWrapper(current)) return current
+            current = delegateOf(current) ?: return current
+        }
+        return current
+    }
+
+    private fun delegateOf(wrapper: Any): Platform? =
+        runCatching {
+            val method = wrapper.javaClass.getDeclaredMethod("getDelegate")
+            method.isAccessible = true
+            method.invoke(wrapper) as? Platform
+        }.getOrNull()
+
+    private const val MAX_UNWRAP_DEPTH = 16
+    private val WRAPPER_CLASS_NAME: String = LoopbackPlatform::class.java.name
 }
 
-private class LoopbackPlatform(val delegate: Platform) : Platform(), ContextAwarePlatform {
+internal class LoopbackPlatform(val delegate: Platform) : Platform(), ContextAwarePlatform {
     override fun isCleartextTrafficPermitted(hostname: String): Boolean =
         LoopbackCleartext.isLoopback(hostname) || delegate.isCleartextTrafficPermitted(hostname)
 

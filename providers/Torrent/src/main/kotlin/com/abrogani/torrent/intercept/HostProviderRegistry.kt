@@ -7,15 +7,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
-/**
- * Finds the host's `ProviderRepositoryImpl.pluginsMap` through the Hilt singleton component.
- *
- * Shapes this relies on (Flixclusive 3.0.x, Hilt/Dagger 2.59.2, no R8):
- * - the application is a `Hilt_*` subclass exposing `generatedComponent()`;
- * - the component (`SingletonCImpl`) holds `provideProviderRepositoryProvider = DoubleCheck.provider(providerRepositoryImplProvider)`;
- * - `providerRepositoryImplProvider` is an unscoped `SwitchingProvider`: calling `get()` on it would build a
- *   second, empty repository, so only memoizing providers (`DoubleCheck`/`SingleCheck`) are ever unwrapped.
- */
 internal object HostProviderRegistry {
     private const val REPOSITORY_HINT = "providerrepository"
     private const val PLUGINS_FIELD = "pluginsMap"
@@ -51,7 +42,6 @@ internal object HostProviderRegistry {
                 .filter { it.name.lowercase().contains(REPOSITORY_HINT) }
                 .mapNotNull { read(it, holder) }
         }
-        // Memoizing providers first: they hold the real singleton, anything else might be a factory.
         for (value in named.sortedBy { if (isMemoizing(it)) 0 else 1 }) {
             val candidate = if (isMemoizing(value)) memoizedOrGet(value) else value
             candidate?.let(::pluginsFlowOf)?.let { return it }
@@ -76,7 +66,6 @@ internal object HostProviderRegistry {
         return flow as MutableStateFlow<Map<String, ProviderPlugin>>
     }
 
-    /** Large Dagger components spill bindings into `*Shard` fields; look one level into those too. */
     private fun shardsOf(component: Any): List<Any> =
         instanceFields(component.javaClass)
             .filter { it.type.name.contains("Shard") }
@@ -92,7 +81,6 @@ internal object HostProviderRegistry {
         return instance.takeIf { it !== sentinel }
     }
 
-    /** Name-matched scoped binding: initialising it builds the one true singleton, so `get()` is safe here. */
     private fun memoizedOrGet(provider: Any): Any? = memoized(provider) ?: invokeNoArg(provider, "get")
 
     private fun sentinelOf(type: Class<*>): Any? {

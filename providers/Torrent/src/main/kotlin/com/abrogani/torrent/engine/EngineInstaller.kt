@@ -17,17 +17,11 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
-/**
- * Downloads only this device's `jni/<abi>/libgojni.so` out of the engine AAR: the archive's tail gives the
- * central directory, which gives the entry's byte range. Servers that ignore `Range` get the whole AAR
- * streamed instead, picking the entry on the way.
- */
 internal class EngineInstaller(client: OkHttpClient) {
     private val downloadClient = client.newBuilder()
         .callTimeout(3, TimeUnit.MINUTES)
         .build()
 
-    /** Writes the verified library to [target], reporting `(downloaded, total)` bytes of the transfer. */
     suspend fun install(abi: String, target: File, onProgress: (Long, Long) -> Unit) = withIOContext {
         val expected = EngineSource.LIBRARY_SHA256[abi]
             ?: throw IllegalArgumentException("Unsupported ABI $abi")
@@ -155,10 +149,6 @@ internal class EngineInstaller(client: OkHttpClient) {
         private fun Response.archiveSize(): Long? =
             header("Content-Range")?.let { CONTENT_RANGE_TOTAL.find(it) }?.groupValues?.get(1)?.toLongOrNull()
 
-        /**
-         * Reads zip entries from [input] (a whole archive or a slice starting at a local header) until [entryName],
-         * inflating it into [target] and checking its sha256 against [expectedSha256].
-         */
         fun extractEntry(input: InputStream, entryName: String, target: File, expectedSha256: String) {
             val digest = MessageDigest.getInstance("SHA-256")
             ZipInputStream(input).use { zip ->
