@@ -32,9 +32,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -60,23 +63,25 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import com.abrogani.servetorr.engine.EngineSettings
 import com.abrogani.servetorr.engine.EngineState
 import com.abrogani.servetorr.engine.TorrentEngine
 import com.abrogani.servetorr.settings.icons.ServeTorrIcons
 import com.abrogani.servetorr.settings.theme.ServeTorrTheme
-import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
 import com.flixclusive.provider.extensions.getBoolAsFlow
 import com.flixclusive.provider.extensions.getInt
 import com.flixclusive.provider.extensions.setBool
@@ -182,7 +187,7 @@ private fun RestartPrompt(state: EngineState) {
         title = { Text("Restart required") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Restart the app to finish setting up the torrent engine.")
+                Text("Restart the app to finish setting up the engine.")
                 if (shown.isNotBlank()) {
                     Text(
                         text = shown,
@@ -200,25 +205,6 @@ private object RestartPromptMemory {
     var lastShown: EngineState? = null
 }
 
-private data class StatusStyle(
-    val label: String,
-    val color: Color,
-    val icon: ImageVector,
-)
-
-@Composable
-private fun EngineState.style(): StatusStyle {
-    val colors = MaterialTheme.colorScheme
-    return when (this) {
-        EngineState.NotInstalled -> StatusStyle("Not installed", colors.outline, ServeTorrIcons.Download)
-        is EngineState.Installing -> StatusStyle("Downloading", colors.secondary, ServeTorrIcons.Download)
-        EngineState.Stopped -> StatusStyle("Stopped", colors.onSurfaceVariant, ServeTorrIcons.Stop)
-        is EngineState.Running -> StatusStyle("Running", colors.primary, ServeTorrIcons.PlayArrow)
-        is EngineState.Failed -> StatusStyle("Error", colors.error, ServeTorrIcons.Warning)
-        is EngineState.RestartRequired -> StatusStyle("Restart needed", colors.tertiary, ServeTorrIcons.RestartAlt)
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EngineCard(
@@ -231,11 +217,13 @@ private fun EngineCard(
         is EngineState.Failed, is EngineState.RestartRequired -> engine.hasEngineFiles
         EngineState.Stopped, is EngineState.Running -> true
     }
-    val status = state.style()
     val colors = MaterialTheme.colorScheme
+    val running = state is EngineState.Running
 
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var torrentsOpen by rememberSaveable { mutableStateOf(false) }
+    var confirmRemove by remember { mutableStateOf(false) }
 
     fun run(action: suspend () -> String) {
         busy = true
@@ -252,9 +240,6 @@ private fun EngineCard(
         }
     }
 
-    val running = state is EngineState.Running
-    var torrentsOpen by rememberSaveable { mutableStateOf(false) }
-
     if (torrentsOpen && installed) {
         TorrentsSheet(
             engine = engine,
@@ -264,14 +249,32 @@ private fun EngineCard(
         )
     }
 
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text("Remove engine?") },
+            text = { Text("You can download it again any time.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        run { engine.remove(); "Engine removed." }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.error),
+                ) { Text("Remove") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
+        )
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
-        color = status.color.copy(alpha = 0.10f).compositeOver(colors.surfaceContainerHigh),
+        color = colors.surfaceContainerHigh,
         contentColor = colors.onSurface,
     ) {
         Column(
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(
@@ -286,20 +289,47 @@ private fun EngineCard(
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(
-                        text = "Version ${engine.engineVersion}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "v${engine.engineVersion}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.onSurfaceVariant,
+                        )
+                        if (running) RunningDot()
+                    }
+                }
+                if (installed) {
+                    EngineToggle(
+                        running = running,
+                        enabled = !busy && state !is EngineState.RestartRequired,
+                        onToggle = {
+                            if (running) {
+                                run { engine.stop(); "" }
+                            } else {
+                                run {
+                                    engine.ensureRunning() ?: throw IllegalStateException("The engine isn't installed.")
+                                    ""
+                                }
+                            }
+                        },
                     )
                 }
-                StatusPill(status)
             }
 
-            Text(
-                text = state.describe(engine.engineVersion),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (state is EngineState.Failed) colors.error else colors.onSurfaceVariant,
-            )
+            state.notice()?.let { notice ->
+                Text(
+                    text = notice,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when (state) {
+                        is EngineState.Failed -> colors.error
+                        is EngineState.RestartRequired -> colors.tertiary
+                        else -> colors.onSurfaceVariant
+                    },
+                )
+            }
 
             (state as? EngineState.Installing)?.let {
                 if (it.total > 0) {
@@ -319,21 +349,21 @@ private fun EngineCard(
             }
 
             if (installed) {
-                FlowRow(
+                HorizontalDivider(color = colors.outlineVariant)
+                Row(
                     modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Button(
-                        onClick = { run { engine.stop(); "Engine stopped. It starts again when you play a torrent link." } },
-                        enabled = !busy && running,
-                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                    ) { ButtonLabel(ServeTorrIcons.Stop, "Stop engine") }
                     FilledTonalButton(
+                        onClick = { torrentsOpen = true },
+                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                    ) { ButtonLabel(ServeTorrIcons.ViewList, "Torrents") }
+                    OutlinedButton(
                         onClick = {
                             run {
                                 when (val dropped = engine.dropAll()) {
-                                    0 -> "No torrents were active."
+                                    0 -> "Nothing was playing."
                                     1 -> "Stopped 1 torrent."
                                     else -> "Stopped $dropped torrents."
                                 }
@@ -341,29 +371,11 @@ private fun EngineCard(
                         },
                         enabled = !busy && running,
                         contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                    ) { ButtonLabel(ServeTorrIcons.StopCircle, "Stop all torrents") }
-                    OutlinedButton(
-                        onClick = { torrentsOpen = true },
-                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                    ) { ButtonLabel(ServeTorrIcons.ViewList, "Torrents") }
-                }
-                HorizontalDivider(color = colors.outlineVariant)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Frees about 26 MB. Download it again any time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = { run { engine.remove(); "Engine removed." } },
-                        enabled = !busy,
-                        colors = ButtonDefaults.textButtonColors(contentColor = colors.error),
-                        contentPadding = ButtonDefaults.TextButtonWithIconContentPadding,
-                    ) { ButtonLabel(ServeTorrIcons.Delete, "Remove engine") }
+                    ) { ButtonLabel(ServeTorrIcons.StopCircle, "Stop all") }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(onClick = { confirmRemove = true }, enabled = !busy) {
+                        Icon(ServeTorrIcons.Delete, contentDescription = "Remove engine", tint = colors.error)
+                    }
                 }
             } else {
                 Button(
@@ -377,12 +389,48 @@ private fun EngineCard(
             if (message.isNotEmpty()) {
                 Text(
                     text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurface,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun EngineToggle(
+    running: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    FilledIconButton(
+        onClick = onToggle,
+        enabled = enabled,
+        modifier = Modifier.size(52.dp),
+        colors = if (running) {
+            IconButtonDefaults.filledIconButtonColors(containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+        } else {
+            IconButtonDefaults.filledIconButtonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
+        },
+    ) {
+        Icon(
+            imageVector = if (running) ServeTorrIcons.Stop else ServeTorrIcons.PlayArrow,
+            contentDescription = if (running) "Stop engine" else "Start engine",
+            modifier = Modifier.size(28.dp),
+        )
+    }
+}
+
+@Composable
+private fun RunningDot() {
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .semantics { contentDescription = "Running" },
+    )
 }
 
 @Composable
@@ -415,25 +463,6 @@ private fun ServeTorrLogo(size: Dp) {
 }
 
 @Composable
-private fun StatusPill(status: StatusStyle) {
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(status.color.copy(alpha = 0.16f))
-            .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Icon(status.icon, contentDescription = null, tint = status.color, modifier = Modifier.size(16.dp))
-        Text(
-            text = status.label,
-            style = MaterialTheme.typography.labelLarge,
-            color = status.color,
-        )
-    }
-}
-
-@Composable
 private fun NetworkCallout() {
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -459,8 +488,7 @@ private fun NetworkCallout() {
                     color = colors.secondary,
                 )
                 Text(
-                    text = "The engine runs a small server only this device can reach. It starts when you play a " +
-                        "torrent link and stops on its own after a few idle minutes.",
+                    text = "Only this device can reach it. Starts on play, stops when idle.",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
@@ -487,14 +515,14 @@ private fun LinksSection(
     SectionCard(
         title = "Links",
         icon = ServeTorrIcons.Link,
-        description = "How ServeTorr picks up torrent links from your other providers.",
+        description = null,
     ) {
         SwitchRow(
-            title = "Play torrent links from all providers",
+            title = "Handle torrent links",
             summary = if (interceptorInstalled) {
-                "Torrent links from your other providers play through the engine."
+                "From all your providers."
             } else {
-                "Unavailable: this version of the app isn't supported. Torrent links won't be changed."
+                "Not supported on this app version."
             },
             checked = intercept,
             enabled = interceptorInstalled,
@@ -516,10 +544,10 @@ private fun LinksSection(
             supportingText = {
                 Text(
                     when {
-                        !portValid -> "Use a port between 1024 and 65535."
-                        runningProxyPort == null -> "Port $port is taken by another app. Pick another one."
+                        !portValid -> "1024 to 65535."
+                        runningProxyPort == null -> "Port $port is in use."
                         runningProxyPort != port -> "Switching to $port..."
-                        else -> "Only reachable from this device. Torrent links found earlier stop working when you change it."
+                        else -> "Changing it breaks links found earlier."
                     },
                 )
             },
@@ -546,11 +574,11 @@ private fun UsageSection(settings: DataStore<Preferences>) {
     SectionCard(
         title = "Data and battery",
         icon = ServeTorrIcons.Power,
-        description = "When the engine is allowed to run.",
+        description = null,
     ) {
         SwitchRow(
             title = "Wi-Fi only",
-            summary = "Don't start the engine on mobile data. Stops it if Wi-Fi drops.",
+            summary = "Never runs on mobile data.",
             checked = wifiOnly,
             icon = ServeTorrIcons.Wifi,
             onCheckedChange = { scope.launch { settings.setBool(WIFI_ONLY_KEY, it) } },
@@ -570,9 +598,9 @@ private fun UsageSection(settings: DataStore<Preferences>) {
             supportingText = {
                 Text(
                     if (idleValid) {
-                        "Stops the engine after this many minutes with nothing playing. 0 keeps it running."
+                        "0 = never."
                     } else {
-                        "Use 0 to ${IDLE_STOP_RANGE.last} minutes."
+                        "0 to ${IDLE_STOP_RANGE.last}."
                     },
                 )
             },
@@ -608,9 +636,9 @@ private fun EngineSettingsSection(
         title = "Engine settings",
         icon = ServeTorrIcons.Settings,
         description = if (running) {
-            "Applying settings restarts every active torrent, so anything playing from a torrent is interrupted."
+            "Applying interrupts playback."
         } else {
-            "Settings are applied when the engine next starts."
+            null
         },
     )
 
@@ -648,23 +676,23 @@ private fun EngineSettingsSection(
     SectionCard(
         title = "Cache",
         icon = ServeTorrIcons.Storage,
-        description = "How much of each torrent is buffered, and where.",
+        description = null,
     ) {
-        NumberField("Cache size per torrent (MB)", current.cacheSizeMb, "32 to 2048. Kept in memory unless stored on disk.") {
+        NumberField("Cache per torrent (MB)", current.cacheSizeMb, "32 to 2048.") {
             update(current.copy(cacheSizeMb = it))
         }
-        NumberField("Read-ahead (%)", current.readAheadPercent, "Share of the cache kept ahead of playback, 5 to 100.") {
+        NumberField("Read-ahead (%)", current.readAheadPercent, "5 to 100.") {
             update(current.copy(readAheadPercent = it))
         }
-        NumberField("Preload (%)", current.preloadPercent, "Share of the cache filled before playback starts, 0 to 100.") {
+        NumberField("Preload (%)", current.preloadPercent, "0 to 100.") {
             update(current.copy(preloadPercent = it))
         }
-        NumberField("Stop idle torrents after (seconds)", current.disconnectTimeoutSeconds, "1 to 3600.") {
+        NumberField("Drop idle torrents after (s)", current.disconnectTimeoutSeconds, "1 to 3600.") {
             update(current.copy(disconnectTimeoutSeconds = it))
         }
         SwitchRow(
             title = "Store cache on disk",
-            summary = "Uses app storage instead of memory. Still limited to the cache size per torrent.",
+            summary = "Instead of memory.",
             checked = current.useDisk,
             onCheckedChange = { update(current.copy(useDisk = it)) },
         )
@@ -680,7 +708,7 @@ private fun EngineSettingsSection(
     SectionCard(
         title = "Speed",
         icon = ServeTorrIcons.Speed,
-        description = "Limit how much bandwidth torrents use.",
+        description = null,
     ) {
         NumberField("Download limit (KiB/s)", current.downloadRateLimitKib, "0 = unlimited.") {
             update(current.copy(downloadRateLimitKib = it))
@@ -688,7 +716,7 @@ private fun EngineSettingsSection(
         NumberField("Upload limit (KiB/s)", current.uploadRateLimitKib, "0 = unlimited.") {
             update(current.copy(uploadRateLimitKib = it))
         }
-        SwitchRow("Disable uploading", "Saves data, but peers may share less with you.", current.disableUpload) {
+        SwitchRow("Disable uploading", null, current.disableUpload) {
             update(current.copy(disableUpload = it))
         }
     }
@@ -696,7 +724,7 @@ private fun EngineSettingsSection(
     SectionCard(
         title = "Trackers",
         icon = ServeTorrIcons.SwapVert,
-        description = "Trackers help find peers faster.",
+        description = null,
     ) {
         Column(modifier = Modifier.selectableGroup()) {
             RETRACKER_MODES.forEachIndexed { mode, label ->
@@ -726,7 +754,7 @@ private fun EngineSettingsSection(
             value = trackersText,
             onValueChange = { trackersText = it },
             label = { Text("Extra trackers") },
-            supportingText = { Text("One announce URL per line. Used when adding or replacing trackers.") },
+            supportingText = { Text("One URL per line.") },
             textStyle = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.5.sp,
@@ -742,10 +770,10 @@ private fun EngineSettingsSection(
         NumberField("Connections per torrent", current.connectionsLimit, "1 to 200.") {
             update(current.copy(connectionsLimit = it))
         }
-        NumberField("Peer port", current.peersListenPort, "0 = random, or 1024 to 65535.") {
+        NumberField("Peer port", current.peersListenPort, "0 = random.") {
             update(current.copy(peersListenPort = it))
         }
-        SwitchRow("Require encryption", "Only connects to peers that encrypt, so fewer peers.", current.forceEncrypt) {
+        SwitchRow("Require encryption", "Fewer peers.", current.forceEncrypt) {
             update(current.copy(forceEncrypt = it))
         }
 
@@ -754,18 +782,18 @@ private fun EngineSettingsSection(
         SwitchRow("Disable TCP", null, current.disableTcp) { update(current.copy(disableTcp = it)) }
         SwitchRow("Disable uTP", null, current.disableUtp) { update(current.copy(disableUtp = it)) }
         SwitchRow("Disable UPnP port forwarding", null, current.disableUpnp) { update(current.copy(disableUpnp = it)) }
-        SwitchRow("Disable DHT", "Magnet links without trackers need DHT to find peers.", current.disableDht) {
+        SwitchRow("Disable DHT", null, current.disableDht) {
             update(current.copy(disableDht = it))
         }
         SwitchRow("Disable peer exchange (PEX)", null, current.disablePex) { update(current.copy(disablePex = it)) }
         SwitchRow(
             "Local peer discovery",
-            "Announces your torrents to other devices on the same network to find peers there.",
+            "Find peers on your network.",
             current.enableLpd,
         ) { update(current.copy(enableLpd = it)) }
 
         SubsectionTitle("Diagnostics")
-        SwitchRow("Debug logging", "Very verbose; only useful when reporting a problem.", current.enableDebug) {
+        SwitchRow("Debug logging", null, current.enableDebug) {
             update(current.copy(enableDebug = it))
         }
     }
@@ -908,7 +936,7 @@ private fun AdvancedCard(
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SectionTitle(title = "Advanced", icon = ServeTorrIcons.Tune)
                     Text(
-                        text = "Connections, network protocols and debug logging. The defaults suit most people.",
+                        text = "Connections, protocols, logging.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1043,21 +1071,20 @@ private fun SubsectionTitle(text: String) {
     )
 }
 
-private fun EngineState.describe(version: String): String =
+private fun EngineState.notice(): String? =
     when (this) {
-        EngineState.NotInstalled -> "Not installed. Download the engine (about 9 MB) to play torrent links."
-        is EngineState.Installing -> "Downloading engine $version..."
-        EngineState.Stopped -> "Installed ($version). It starts when you play a torrent link."
-        is EngineState.Running -> "Running ($version)"
-        is EngineState.Failed -> "Error: $message"
-        is EngineState.RestartRequired -> "Restart the app to finish setting up the engine. $reason"
+        EngineState.NotInstalled -> "Download the engine to play torrent links."
+        is EngineState.Installing -> "Downloading..."
+        EngineState.Stopped, is EngineState.Running -> null
+        is EngineState.Failed -> message
+        is EngineState.RestartRequired -> "Restart the app. $reason"
     }
 
 private val RETRACKER_MODES = listOf(
-    "Use only the torrent's own trackers",
-    "Add the extra trackers below (recommended)",
-    "Remove all trackers (DHT and peer exchange only)",
-    "Replace the torrent's trackers with the ones below",
+    "Torrent's own only",
+    "Add extra trackers (recommended)",
+    "None (DHT and PEX only)",
+    "Replace with extra trackers",
 )
 
 private const val STATUS_REFRESH_MILLIS = 1_000L
