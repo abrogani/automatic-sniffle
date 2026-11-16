@@ -130,7 +130,7 @@ Default trackers are the union of CloudStream's list and ours (`EngineSource.DEF
 
 The screen uses its own green Material 3 theme (`settings/theme`) and picks dark or light from the host's background,
 since the host is dark-only. Icons are Material Icons path data embedded in `settings/icons`, because the host doesn't
-ship `material-icons`. The header icon is loaded with Coil from `ICON_URL`.
+ship `material-icons`. The header icon is loaded with Coil from `ICON_URL`. The screen is a `Scaffold` (inner padding ignored); engine settings are a draft with a Save FAB that animates in when it differs from what's applied, asks for confirmation ("Apply") while the engine runs since applying restarts every torrent, and reports via snackbar. A References card links TorrServer, the ServeTorr engine repo and TorrServe.
 
 **Torrents sheet.** Lists the engine's torrents plus disk-cache leftovers, refreshing every 2 s. Per-torrent removal
 calls `rem`, clears its viewed state and deletes its cache dir. **Clear cache** wipes all torrents, the disk cache, the

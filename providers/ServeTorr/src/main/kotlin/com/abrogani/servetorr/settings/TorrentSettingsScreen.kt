@@ -5,6 +5,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -43,12 +47,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,12 +72,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,8 +99,8 @@ import com.flixclusive.provider.extensions.setBool
 import com.flixclusive.provider.extensions.setInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -104,21 +114,15 @@ internal fun TorrentSettingsScreen(
     backgroundScope: CoroutineScope,
 ) {
     ServeTorrTheme {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.onBackground,
-        ) {
-            SettingsContent(
-                settings = settings,
-                engine = engine,
-                isInterceptorInstalled = isInterceptorInstalled,
-                streamsToggle = streamsToggle,
-                proxyPort = proxyPort,
-                onPortChange = onPortChange,
-                backgroundScope = backgroundScope,
-            )
-        }
+        SettingsContent(
+            settings = settings,
+            engine = engine,
+            isInterceptorInstalled = isInterceptorInstalled,
+            streamsToggle = streamsToggle,
+            proxyPort = proxyPort,
+            onPortChange = onPortChange,
+            backgroundScope = backgroundScope,
+        )
     }
 }
 
@@ -145,30 +149,140 @@ private fun SettingsContent(
         }
     }
 
+    val running = state is EngineState.Running
+    val editor = remember(engine) { EngineSettingsEditor() }
+    val snackbars = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var confirmApply by remember { mutableStateOf(false) }
+
+    LaunchedEffect(engine) { editor.load(engine) }
+
+    fun save() {
+        scope.launch {
+            val result = editor.save(engine, running)
+            snackbars.currentSnackbarData?.dismiss()
+            snackbars.showSnackbar(result)
+        }
+    }
+
     RestartPrompt(state)
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        EngineCard(engine = engine, state = state, backgroundScope = backgroundScope)
-
-        NetworkCallout()
-
-        LinksSection(
-            settings = settings,
-            interceptorInstalled = interceptorInstalled,
-            streamsToggle = toggle,
-            runningProxyPort = runningProxyPort,
-            onPortChange = onPortChange,
+    if (confirmApply) {
+        AlertDialog(
+            onDismissRequest = { confirmApply = false },
+            title = { Text("Apply now?") },
+            text = { Text("The engine is running. Applying restarts every active torrent.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmApply = false
+                    save()
+                }) { Text("Apply") }
+            },
+            dismissButton = { TextButton(onClick = { confirmApply = false }) { Text("Cancel") } },
         )
+    }
 
-        UsageSection(settings = settings)
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbars) },
+        floatingActionButton = {
+            AnimatedVisibility(
+                visible = editor.dirty,
+                enter = scaleIn() + fadeIn(),
+                exit = scaleOut() + fadeOut(),
+            ) {
+                val valid = editor.errors.isEmpty() && !editor.busy
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        when {
+                            editor.busy -> Unit
+                            editor.errors.isNotEmpty() -> scope.launch {
+                                snackbars.currentSnackbarData?.dismiss()
+                                snackbars.showSnackbar(editor.errors.first())
+                            }
+                            running -> confirmApply = true
+                            else -> save()
+                        }
+                    },
+                    icon = { Icon(ServeTorrIcons.Check, contentDescription = null) },
+                    text = { Text(if (running) "Apply" else "Save") },
+                    containerColor = if (valid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (valid) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    ) { _ ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            EngineCard(engine = engine, state = state, backgroundScope = backgroundScope)
 
-        EngineSettingsSection(engine = engine, running = state is EngineState.Running)
+            NetworkCallout()
+
+            LinksSection(
+                settings = settings,
+                interceptorInstalled = interceptorInstalled,
+                streamsToggle = toggle,
+                runningProxyPort = runningProxyPort,
+                onPortChange = onPortChange,
+            )
+
+            UsageSection(settings = settings)
+
+            EngineSettingsSection(engine = engine, running = running, editor = editor, snackbars = snackbars)
+
+            ReferencesSection()
+
+            Spacer(modifier = Modifier.height(FAB_CLEARANCE))
+        }
+    }
+}
+
+@Stable
+private class EngineSettingsEditor {
+    var draft by mutableStateOf<EngineSettings?>(null)
+    var saved by mutableStateOf<EngineSettings?>(null)
+    var trackersText by mutableStateOf("")
+    var busy by mutableStateOf(false)
+
+    val edited: EngineSettings?
+        get() = draft?.copy(trackers = trackersText.lines().map(String::trim).filter(String::isNotEmpty))
+
+    val errors: List<String>
+        get() = edited?.errors().orEmpty()
+
+    val dirty: Boolean
+        get() = edited.let { it != null && it != saved }
+
+    suspend fun load(engine: TorrentEngine) {
+        show(engine.loadSettings())
+    }
+
+    fun show(settings: EngineSettings) {
+        saved = settings
+        draft = settings
+        trackersText = settings.trackers.joinToString("\n")
+    }
+
+    suspend fun save(engine: TorrentEngine, running: Boolean): String {
+        val target = edited ?: return "Nothing to save."
+        busy = true
+        return try {
+            engine.updateSettings(target)
+            saved = target
+            if (running) "Applied." else "Saved."
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            e.message ?: e.javaClass.simpleName
+        } finally {
+            busy = false
+        }
     }
 }
 
@@ -618,33 +732,19 @@ private fun UsageSection(settings: DataStore<Preferences>) {
 private fun EngineSettingsSection(
     engine: TorrentEngine,
     running: Boolean,
+    editor: EngineSettingsEditor,
+    snackbars: SnackbarHostState,
 ) {
     val scope = rememberCoroutineScope()
-    var draft by remember { mutableStateOf<EngineSettings?>(null) }
-    var saved by remember { mutableStateOf<EngineSettings?>(null) }
-    var trackersText by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("") }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(engine) {
-        val loaded = engine.loadSettings()
-        saved = loaded
-        draft = loaded
-        trackersText = loaded.trackers.joinToString("\n")
-    }
 
     SectionHeader(
         title = "Engine settings",
         icon = ServeTorrIcons.Settings,
-        description = if (running) {
-            "Applying interrupts playback."
-        } else {
-            null
-        },
+        description = if (running) "Applying interrupts playback." else null,
     )
 
-    val current = draft ?: run {
+    val current = editor.draft ?: run {
         Text(
             text = "Loading...",
             style = MaterialTheme.typography.bodyMedium,
@@ -653,27 +753,7 @@ private fun EngineSettingsSection(
         )
         return
     }
-    val edited = current.copy(trackers = trackersText.lines().map(String::trim).filter(String::isNotEmpty))
-    val errors = edited.errors()
-    val update: (EngineSettings) -> Unit = { draft = it }
-
-    fun runAction(
-        done: String,
-        action: suspend () -> Unit,
-    ) {
-        busy = true
-        message = ""
-        scope.launch {
-            message = try {
-                action()
-                done
-            } catch (e: Throwable) {
-                if (e is CancellationException) throw e
-                e.message ?: e.javaClass.simpleName
-            }
-            busy = false
-        }
-    }
+    val update: (EngineSettings) -> Unit = { editor.draft = it }
 
     SectionCard(
         title = "Cache",
@@ -753,8 +833,8 @@ private fun EngineSettingsSection(
             }
         }
         OutlinedTextField(
-            value = trackersText,
-            onValueChange = { trackersText = it },
+            value = editor.trackersText,
+            onValueChange = { editor.trackersText = it },
             label = { Text("Extra trackers") },
             supportingText = { Text("One URL per line.") },
             textStyle = MaterialTheme.typography.bodySmall.copy(
@@ -800,7 +880,7 @@ private fun EngineSettingsSection(
         }
     }
 
-    if (errors.isNotEmpty() || message.isNotEmpty()) {
+    editor.errors.takeIf { it.isNotEmpty() }?.let { errors ->
         Column(
             modifier = Modifier.padding(horizontal = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -808,45 +888,96 @@ private fun EngineSettingsSection(
             errors.forEach {
                 Text(text = it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
-            if (message.isNotEmpty()) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        OutlinedButton(
-            onClick = {
-                runAction("Reset to defaults") {
+    OutlinedButton(
+        onClick = {
+            editor.busy = true
+            scope.launch {
+                val result = try {
                     engine.resetSettings()
-                    val defaults = EngineSettings()
-                    saved = defaults
-                    draft = defaults
-                    trackersText = defaults.trackers.joinToString("\n")
+                    editor.show(EngineSettings())
+                    "Reset to defaults."
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    e.message ?: e.javaClass.simpleName
+                } finally {
+                    editor.busy = false
                 }
-            },
-            enabled = !busy,
-            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-            modifier = Modifier.weight(1f),
-        ) { ButtonLabel(ServeTorrIcons.RestartAlt, "Reset to defaults") }
-        Button(
-            onClick = {
-                runAction(if (running) "Applied" else "Saved") {
-                    engine.updateSettings(edited)
-                    saved = edited
-                }
-            },
-            enabled = !busy && errors.isEmpty() && edited != saved,
-            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-            modifier = Modifier.weight(1f),
-        ) { ButtonLabel(ServeTorrIcons.Check, if (running) "Apply" else "Save") }
+                snackbars.currentSnackbarData?.dismiss()
+                snackbars.showSnackbar(result)
+            }
+        },
+        enabled = !editor.busy,
+        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+        modifier = Modifier.fillMaxWidth(),
+    ) { ButtonLabel(ServeTorrIcons.RestartAlt, "Reset to defaults") }
+}
+
+@Composable
+private fun ReferencesSection() {
+    SectionCard(
+        title = "References",
+        icon = ServeTorrIcons.Info,
+        description = null,
+    ) {
+        REFERENCES.forEach { ReferenceRow(it) }
+    }
+}
+
+private data class Reference(val title: String, val owner: String, val repo: String) {
+    val url get() = "https://github.com/$owner/$repo"
+    val display get() = "github.com/$owner/$repo"
+    val avatar get() = "https://github.com/$owner.png"
+}
+
+private val REFERENCES = listOf(
+    Reference("TorrServer", "YouROK", "TorrServer"),
+    Reference("ServeTorr engine", "abrogani", "servetorr-engine"),
+    Reference("TorrServe", "YouROK", "TorrServe"),
+)
+
+@Composable
+private fun ReferenceRow(reference: Reference) {
+    val uriHandler = LocalUriHandler.current
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(role = Role.Button, onClickLabel = "Open ${reference.display}") {
+                runCatching { uriHandler.openUri(reference.url) }
+            }
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        AsyncImage(
+            model = reference.avatar,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(colors.surfaceVariant),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(text = reference.title, style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+            Text(
+                text = reference.display,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = ServeTorrIcons.OpenInNew,
+            contentDescription = null,
+            tint = colors.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 
@@ -1092,5 +1223,6 @@ private val RETRACKER_MODES = listOf(
 )
 
 private const val STATUS_REFRESH_MILLIS = 1_000L
+private val FAB_CLEARANCE = 88.dp
 private const val MAX_NUMBER_DIGITS = 6
 private val IDLE_STOP_RANGE = 0..240
