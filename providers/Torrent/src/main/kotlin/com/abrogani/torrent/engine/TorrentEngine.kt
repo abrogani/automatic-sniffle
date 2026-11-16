@@ -175,18 +175,34 @@ internal class TorrentEngine(
         api.metadata(port, link.source, link.infoHash, METADATA_TIMEOUT_MILLIS, EngineRuntime.dropGeneration)
     }
 
-    suspend fun dropAll() {
+    suspend fun dropAll(): Int {
         val port = EngineRuntime.port
             ?: EngineRuntime.flags.startedPort?.takeIf { api.echo(it) }
-            ?: return
+            ?: return 0
         try {
-            api.list(port).mapNotNull { it.hash }.forEach { api.drop(port, it) }
-        } catch (e: Throwable) {
-            if (e is CancellationException) throw e
-            warnLog("[Torrent] Could not drop torrents: $e")
+            val hashes = api.list(port).mapNotNull { it.hash }
+            hashes.forEach { api.drop(port, it) }
+            return hashes.size
         } finally {
             EngineRuntime.dropGeneration.update { it + 1 }
         }
+    }
+
+    suspend fun stop() {
+        EngineRuntime.mutex.withLock {
+            check(EngineRuntime.pendingStart?.isActive != true) { "The engine is still starting. Try again in a moment." }
+            val flags = EngineRuntime.flags
+            if (EngineRuntime.port == null && flags.startedPort == null) return@withLock
+
+            val stopped = withIOContext { EngineRuntime.stop() }
+            check(stopped) { "This copy of the provider can't reach the engine. Restart the app to stop it." }
+
+            EngineRuntime.port = null
+            flags.startedPort = null
+            EngineRuntime.dropGeneration.update { it + 1 }
+            infoLog("[Torrent] Engine stopped")
+        }
+        settle()
     }
 
     suspend fun loadSettings(): EngineSettings {
@@ -293,14 +309,13 @@ internal class TorrentEngine(
     }
 
     suspend fun remove() {
+        stop()
         EngineRuntime.installMutex.withLock {
             withIOContext {
                 rootDir.deleteTree()
+                dataDir.deleteTree()
+                diskCacheDir.deleteTree()
                 EngineRuntime.verifiedLibrary = null
-                if (EngineRuntime.port == null && EngineRuntime.flags.startedPort == null) {
-                    dataDir.deleteTree()
-                    diskCacheDir.deleteTree()
-                }
             }
             settle()
         }

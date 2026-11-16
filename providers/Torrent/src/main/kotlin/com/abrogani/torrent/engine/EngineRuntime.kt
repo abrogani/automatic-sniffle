@@ -68,6 +68,12 @@ internal object EngineRuntime {
         }
     }
 
+    fun stop(): Boolean {
+        val server = bindings ?: return false
+        invoke { server.getMethod("stopTorrentServer").invoke(null) }
+        return true
+    }
+
     fun addTrackers(trackers: List<String>): Boolean {
         val server = bindings ?: return false
         invoke {

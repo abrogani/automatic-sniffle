@@ -28,7 +28,8 @@ flxProvider {
         - Torrents are only looked up when you press play, so finding links is instant and nothing is downloaded while browsing.
         - Fixed the wrong file (or a sample) playing for many torrents.
         - A season pack without the episode you picked no longer plays a different episode.
-        - The engine only starts when a torrent is played.
+        - The engine only starts when a torrent is played, and can be stopped from the settings.
+        - "Remove engine" and "Stop all torrents" now work while the engine runs and say what they did.
         - Full engine settings: cache, read-ahead, preload, disk cache, connection and speed limits, peer port, encryption, DHT/PEX/UPnP/TCP/uTP/IPv6, trackers.
         - Fixed interception stopping after updating this provider or switching profiles.
         - Providers without settings no longer open an empty settings page.
