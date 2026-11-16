@@ -1,0 +1,78 @@
+<html><body><script>
+
+    var player = jwplayer("vplayer");
+    var baseTracks = [
+        {
+          file: '/api/v1/slides?length=5657&url=https%3A%2F%2Fi1750.imgvm.com%2Fi%2F01%2F03062%2F7v1ec8xi00u1_p.jpg',
+          kind: 'thumbnails'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1b/MTQwMDgzNy1EYW5pc2ggLSBbRGFuXSA0.vtt',
+          label: 'Danish - [Dan] 4',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1c/MTQwMDgzNy1FbmdsaXNoIC0gU2RoIFtFbmddIDM%3D.vtt',
+          label: 'English - Sdh [Eng] 3',
+          kind: 'captions',
+          "default": true
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1a/MTQwMDgzNy1FbmdsaXNoIC0gW0VuZ10gMg%3D%3D.vtt',
+          label: 'English - [Eng] 2',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/2d/MTQwMDgzNy1GaW5uaXNoIC0gW0Zpbl0gNw%3D%3D.vtt',
+          label: 'Finnish - [Fin] 7',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1b/MTQwMDgzNy1GcmVuY2ggLSBbRnJlXSA4.vtt',
+          label: 'French - [Fre] 8',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/2d/MTQwMDgzNy1IaW5kaSAtIFtIaW5dIDk%3D.vtt',
+          label: 'Hindi - [Hin] 9',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1a/MTQwMDgzNy1JdGFsaWFuIC0gW0l0YV0gMTA%3D.vtt',
+          label: 'Italian - [Ita] 10',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/2c/MTQwMDgzNy1Ob3J3ZWdpYW4gQm9rbcOlbCAtIFtOb2JdIDEx.vtt',
+          label: 'Norwegian Bokmål - [Nob] 11',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/5d/MTQwMDgzNy1Qb3J0dWd1ZXNlIC0gW1Bvcl0gMTI%3D.vtt',
+          label: 'Portuguese - [Por] 12',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/2c/MTQwMDgzNy1TcGFuaXNoIC0gW1NwYV0gNQ%3D%3D.vtt',
+          label: 'Spanish - [Spa] 5',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/4d/MTQwMDgzNy1TcGFuaXNoIC0gW1NwYV0gNg%3D%3D.vtt',
+          label: 'Spanish - [Spa] 6',
+          kind: 'captions'
+        },
+        {
+          file: 'https://qqqcdn.cloud/interm/1c/MTQwMDgzNy1Td2VkaXNoIC0gW1N3ZV0gMTM%3D.vtt',
+          label: 'Swedish - [Swe] 13',
+          kind: 'captions'
+        }
+    ];
+    var playerInstance = player.setup({
+      sources: [{ file: 'https://prx-am-s-1.vmpx.online/hls2/01/03062/7v1ec8xi00u1_,n,l,.urlset/master.m3u8?t=8weUywFmxHSDY_lbhwnW6YGvHi9LWxH5-IyWOgNk_6A=&s=1794816889&e=43200&v=&srv=o-box-t1&i=0.4&sp=0&asn=9299' }],
+      image: "https://i1750.imgvm.com/i/01/03062/7v1ec8xi00u1.jpg",
+      bitrate: "2160000",
+      label: "720p HD",
+      width: "100%",
+      height: "100%",
+</script></body></html>

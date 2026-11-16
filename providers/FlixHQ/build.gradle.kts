@@ -2,26 +2,33 @@ import com.flixclusive.model.provider.Language
 import com.flixclusive.model.provider.ProviderType
 import com.flixclusive.model.provider.ProviderStatus
 
+dependencies {
+    testImplementation(libs.strikt)
+}
+
 android {}
 
 flxProvider {
     description =
         """
-        NOTICE: This provider uses WebView to scrape content. This might lag.
-        
-        Stream seamlessly in adjustable HD resolution (1080p) with blazing-fast loading speeds. Offers HLS media.
+        Catalogs, search, metadata and cross-match for flixhqz.net, streaming through Vidmoly and Byse.
+
+        ⚠️ The Byse server runs in a WebView and asks you to tap play to verify you're human before its stream loads.
         """.trimIndent()
 
     changelog =
         """
-        # v1.0.3 - patch2
-        - update compose BOM to 2024.09.02
+        # v2.0.0
+        - rewrite from scratch for the 1.4.0 SDK
+        - add catalogs, search, metadata, IMDB cross-match
+        - add Vidmoly extractor
+        - add Byse extractor (WebView capture)
         """.trimIndent()
 
-    versionMajor = 1
+    versionMajor = 2
     versionMinor = 0
-    versionPatch = 3
-    versionBuild = 2
+    versionPatch = 0
+    versionBuild = 0
 
     iconUrl = "https://i.imgur.com/LNtqPTi.png"
 
@@ -29,5 +36,5 @@ flxProvider {
 
     providerType = ProviderType.All
 
-    status = ProviderStatus.Down
+    status = ProviderStatus.Working
 }
