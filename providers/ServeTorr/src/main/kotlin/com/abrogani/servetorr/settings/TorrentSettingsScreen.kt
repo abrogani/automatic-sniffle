@@ -131,9 +131,6 @@ private fun SettingsContent(
     backgroundScope: CoroutineScope,
 ) {
     val state by engine.state.collectAsState()
-    val intercept by remember(settings) {
-        settings.getBoolAsFlow(INTERCEPT_KEY, DEFAULT_INTERCEPT)
-    }.collectAsState(initial = DEFAULT_INTERCEPT)
 
     var interceptorInstalled by remember { mutableStateOf(isInterceptorInstalled()) }
     var runningProxyPort by remember { mutableStateOf(proxyPort()) }
@@ -162,7 +159,6 @@ private fun SettingsContent(
 
         LinksSection(
             settings = settings,
-            intercept = intercept,
             interceptorInstalled = interceptorInstalled,
             linksCapabilityOff = linksCapability == false,
             runningProxyPort = runningProxyPort,
@@ -506,7 +502,6 @@ private fun NetworkCallout() {
 @Composable
 private fun LinksSection(
     settings: DataStore<Preferences>,
-    intercept: Boolean,
     interceptorInstalled: Boolean,
     linksCapabilityOff: Boolean,
     runningProxyPort: Int?,
@@ -524,18 +519,13 @@ private fun LinksSection(
         icon = ServeTorrIcons.Link,
         description = null,
     ) {
-        SwitchRow(
-            title = "Handle torrent links",
-            summary = when {
-                !interceptorInstalled -> "Not supported on this app version."
-                linksCapabilityOff -> "Off: Links is disabled for ServeTorr in Providers."
-                else -> "From all your providers."
-            },
-            checked = intercept,
-            enabled = interceptorInstalled,
-            summaryIsError = !interceptorInstalled || linksCapabilityOff,
-            onCheckedChange = { scope.launch { settings.setBool(INTERCEPT_KEY, it) } },
-        )
+        when {
+            !interceptorInstalled -> "Torrent links can't be handled on this app version."
+            linksCapabilityOff -> "Off. Turn on Links for ServeTorr in Providers."
+            else -> null
+        }?.let {
+            Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
 
         val port = portText.toIntOrNull()
         val portValid = port?.isValidPort() == true

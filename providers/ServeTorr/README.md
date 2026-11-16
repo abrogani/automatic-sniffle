@@ -114,7 +114,7 @@ Every deletion of engine files is logged with path and size. Missing or failed-v
 
 | Setting | Stored in | Notes |
 |---|---|---|
-| Intercept links | plugin DataStore | Master switch for rewriting. Also off while ServeTorr's **Links** capability is disabled in the host's provider screen. |
+| Intercept links | host (`installed_providers.isMediaLinkEnabled`) | No in-app switch: ServeTorr's **Links** capability in the host's provider screen turns interception on and off. The Links card says when it's off. |
 | Link port | plugin DataStore | Default 47390. Changing it rebinds the proxy live. Links cached on the old port are purged. |
 | Wi-Fi only | plugin DataStore | Proxy answers 503 off Wi-Fi/Ethernet. A running engine stops when the default network leaves Wi-Fi or the setting is turned on while off Wi-Fi. VPNs count as Wi-Fi when their underlying transport is Wi-Fi. |
 | Stop when idle | plugin DataStore | Minutes, 0 to 240, 0 = never. |

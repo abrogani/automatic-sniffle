@@ -14,11 +14,9 @@ import com.abrogani.servetorr.net.LoopbackCleartext
 import com.abrogani.servetorr.net.NetworkPolicy
 import com.abrogani.servetorr.proxy.LinkProxy
 import com.abrogani.servetorr.settings.DEFAULT_IDLE_STOP_MINUTES
-import com.abrogani.servetorr.settings.DEFAULT_INTERCEPT
 import com.abrogani.servetorr.settings.DEFAULT_PORT
 import com.abrogani.servetorr.settings.DEFAULT_WIFI_ONLY
 import com.abrogani.servetorr.settings.IDLE_STOP_MINUTES_KEY
-import com.abrogani.servetorr.settings.INTERCEPT_KEY
 import com.abrogani.servetorr.settings.PORT_KEY
 import com.abrogani.servetorr.settings.TorrentSettingsScreen
 import com.abrogani.servetorr.settings.WIFI_ONLY_KEY
@@ -118,8 +116,7 @@ class ServeTorr : ProviderPlugin() {
     }
 
     private suspend fun interceptionEnabled(): Boolean =
-        settings.getBool(INTERCEPT_KEY, DEFAULT_INTERCEPT) &&
-            HostCapability.isMediaLinkEnabled(application, this) != false
+        HostCapability.isMediaLinkEnabled(application, this) != false
 
     override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi = PlaceholderLinkApi
 
