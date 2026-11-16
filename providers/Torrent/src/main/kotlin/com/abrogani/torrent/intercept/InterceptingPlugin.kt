@@ -2,6 +2,7 @@ package com.abrogani.torrent.intercept
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.reflect.getDeclaredComposableMethod
 import com.abrogani.torrent.link.TorrentLinkRewriter
 import com.flixclusive.provider.ProviderPlugin
 import com.flixclusive.provider.capability.CatalogProviderApi
@@ -11,17 +12,11 @@ import com.flixclusive.provider.capability.MediaMetadataProviderApi
 import com.flixclusive.provider.capability.SearchProviderApi
 import com.flixclusive.provider.capability.TrackerProviderApi
 
-/**
- * Stands in for [inner] in the host's plugin registry. Everything is delegated except the media link api,
- * which is wrapped in an [InterceptingLinkApi].
- *
- * The host only injects `manifest`/`settings`/`resources` into the plugin it constructed, so they are copied here;
- * `id` is final in [ProviderPlugin] and reads our copy of the manifest.
- */
-internal class InterceptingPlugin(
+internal open class InterceptingPlugin(
     val inner: ProviderPlugin,
     private val rewriter: TorrentLinkRewriter,
     private val isEnabled: suspend () -> Boolean,
+    val owner: Any? = null,
 ) : ProviderPlugin() {
     @Volatile
     private var cachedLinkApi: InterceptingLinkApi? = null
@@ -59,8 +54,37 @@ internal class InterceptingPlugin(
 
     override suspend fun onUnload(context: Context) = inner.onUnload(context)
 
-    @Composable
-    override fun SettingsScreen() {
-        inner.SettingsScreen()
+    class WithSettings(
+        inner: ProviderPlugin,
+        rewriter: TorrentLinkRewriter,
+        isEnabled: suspend () -> Boolean,
+        owner: Any? = null,
+    ) : InterceptingPlugin(inner, rewriter, isEnabled, owner) {
+        @Composable
+        override fun SettingsScreen() {
+            inner.SettingsScreen()
+        }
+    }
+
+    companion object {
+        fun create(
+            inner: ProviderPlugin,
+            rewriter: TorrentLinkRewriter,
+            isEnabled: suspend () -> Boolean,
+            owner: Any? = null,
+        ): InterceptingPlugin =
+            if (declaresSettingsScreen(inner.javaClass)) {
+                WithSettings(inner, rewriter, isEnabled, owner)
+            } else {
+                InterceptingPlugin(inner, rewriter, isEnabled, owner)
+            }
+
+        fun declaresSettingsScreen(type: Class<*>): Boolean =
+            try {
+                type.getDeclaredComposableMethod("SettingsScreen")
+                true
+            } catch (_: Throwable) {
+                false
+            }
     }
 }

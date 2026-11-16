@@ -9,10 +9,9 @@ import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.model.provider.link.Subtitle
 import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.capability.MediaLinkType
-import io.mockk.coEvery
-import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.verify
 import io.mockk.mockk
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
@@ -30,7 +29,7 @@ class InterceptingLinkApiTest {
     )
     private val http = Stream(name = "Direct", url = "https://cdn.example.com/video.m3u8")
     private val subtitle = Subtitle(language = "English", url = "https://cdn.example.com/en.vtt")
-    private val rewritten = Stream(name = "Torrent 1080p", url = "http://127.0.0.1:8090/stream/x?link=abc&index=1&play")
+    private val rewritten = Stream(name = "Torrent 1080p", url = "http://127.0.0.1:47390/torrent/x?link=abc")
     private val media = mockk<MediaMetadata>(relaxed = true)
 
     private fun innerEmitting(vararg links: MediaLink) = object : MediaLinkProviderApi {
@@ -50,19 +49,20 @@ class InterceptingLinkApiTest {
     @Test
     fun `torrent streams are rewritten and others pass through in order`() = runTest {
         val rewriter = mockk<TorrentLinkRewriter>()
-        coEvery { rewriter.rewrite(magnet, null) } returns rewritten
+        every { rewriter.rewrite(any(), any()) } returns null
+        every { rewriter.rewrite(magnet, null) } returns rewritten
         val api = InterceptingLinkApi(innerEmitting(http, magnet, subtitle), rewriter) { true }
 
         val found = collect(api)
 
-        expectThat(found).containsExactly(http, subtitle, rewritten)
-        coVerify(exactly = 1) { rewriter.rewrite(any(), any()) }
+        expectThat(found).containsExactly(http, rewritten, subtitle)
+        verify(exactly = 1) { rewriter.rewrite(magnet, null) }
     }
 
     @Test
     fun `torrent stream falls back to the original when the rewriter declines`() = runTest {
         val rewriter = mockk<TorrentLinkRewriter>()
-        coEvery { rewriter.rewrite(any(), any()) } returns null
+        every { rewriter.rewrite(any(), any()) } returns null
         val api = InterceptingLinkApi(innerEmitting(magnet), rewriter) { true }
 
         expectThat(collect(api)).containsExactly(magnet)
@@ -74,7 +74,7 @@ class InterceptingLinkApiTest {
         val api = InterceptingLinkApi(innerEmitting(magnet, http), rewriter) { false }
 
         expectThat(collect(api)).containsExactly(magnet, http)
-        coVerify(exactly = 0) { rewriter.rewrite(any(), any()) }
+        verify(exactly = 0) { rewriter.rewrite(any(), any()) }
     }
 
     @Test
@@ -86,24 +86,51 @@ class InterceptingLinkApiTest {
     }
 
     @Test
-    fun `getLinks returns only after pending rewrites have emitted`() = runTest {
+    fun `a throwing rewriter passes the original through`() = runTest {
         val rewriter = mockk<TorrentLinkRewriter>()
-        coEvery { rewriter.rewrite(any(), any()) } coAnswers {
-            delay(5_000)
-            rewritten
-        }
+        every { rewriter.rewrite(any(), any()) } throws IllegalStateException("boom")
         val api = InterceptingLinkApi(innerEmitting(magnet, http), rewriter) { true }
 
-        val found = collect(api)
+        expectThat(collect(api)).containsExactly(magnet, http)
+    }
 
-        expectThat(found).containsExactly(http, rewritten)
+    @Test
+    fun `links emitted after getLinks returned are still rewritten`() = runTest {
+        val rewriter = mockk<TorrentLinkRewriter>()
+        every { rewriter.rewrite(magnet, null) } returns rewritten
+        var late: ((MediaLink) -> Unit)? = null
+        val inner = object : MediaLinkProviderApi {
+            override val supportedLinkTypes = setOf(MediaLinkType.STREAMS)
+
+            override suspend fun getLinks(media: MediaMetadata, episode: Episode?, onLinkFound: (MediaLink) -> Unit) {
+                late = onLinkFound
+            }
+        }
+        val found = mutableListOf<MediaLink>()
+
+        InterceptingLinkApi(inner, rewriter) { true }.getLinks(media, null) { found += it }
+        late!!(magnet)
+
+        expectThat(found).containsExactly(rewritten)
+    }
+
+    @Test
+    fun `the episode is passed to the rewriter`() = runTest {
+        val rewriter = mockk<TorrentLinkRewriter>()
+        val episode = Episode(id = "e", number = 2, season = 1, isReleased = true)
+        every { rewriter.rewrite(magnet, episode) } returns rewritten
+        val found = mutableListOf<MediaLink>()
+
+        InterceptingLinkApi(innerEmitting(magnet), rewriter) { true }.getLinks(media, episode) { found += it }
+
+        expectThat(found).containsExactly(rewritten)
     }
 
     @Test
     fun `isEnabled is read once per call`() = runTest {
         var reads = 0
         val rewriter = mockk<TorrentLinkRewriter>()
-        coEvery { rewriter.rewrite(any(), any()) } returns rewritten
+        every { rewriter.rewrite(any(), any()) } returns rewritten
         val api = InterceptingLinkApi(innerEmitting(magnet, magnet, http), rewriter) {
             reads++
             true

@@ -2,18 +2,11 @@ package com.abrogani.torrent.link
 
 import java.net.URLDecoder
 
-/*
- * File hints are deliberately not turned into [TorrentLink.fileIndex]. BEP 53 `so=` and the
- * `index=`/`fileIdx=` params other apps emit (Stremio, torrent-stream) count files in the
- * torrent's info-dict order, from 0. TorrServer numbers `file_stats[].id` from 1 after sorting
- * the files by path (server/torr/torrent.go, Status(): `sort.Slice(files, CompareStrings)` then
- * `Id: i + 1`), so the two only coincide by luck, and a wrong guess plays the wrong episode.
- * Leaving fileIndex null makes the rewriter resolve the file list instead.
- */
 internal object TorrentLinkParser {
     private val HEX_HASH = Regex("^[0-9a-fA-F]{40}$")
     private val BASE32_HASH = Regex("^[A-Za-z2-7]{32}$")
     private val XT_KEY = Regex("^xt\\.\\d+$")
+    private val TR_KEY = Regex("^tr(\\.\\d+)?$")
     private val TORRENT_FILE = Regex("^.+\\.torrent$", RegexOption.IGNORE_CASE)
     private const val BTIH_PREFIX = "urn:btih:"
     private const val BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
@@ -30,7 +23,6 @@ internal object TorrentLinkParser {
         }
     }
 
-    /** Lowercase 40-char hex for a 40-hex or 32-base32 BitTorrent v1 info hash, else null. */
     fun normalizeInfoHash(hash: String): String? =
         when {
             HEX_HASH.matches(hash) -> hash.lowercase()
@@ -38,16 +30,26 @@ internal object TorrentLinkParser {
             else -> null
         }
 
-    private fun parseMagnet(url: String): TorrentLink? {
-        val query = url.substringAfter('?', missingDelimiterValue = "")
-        if (query.isEmpty()) return null
+    fun trackers(url: String): List<String> {
+        if (!url.trim().startsWith("magnet:", ignoreCase = true)) return emptyList()
+        return magnetParams(url.trim())
+            .filter { (key, _) -> TR_KEY.matches(key) }
+            .map { (_, value) -> decode(value).trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
 
-        val params =
-            query
-                .substringBefore('#')
-                .split('&')
-                .filter { it.isNotEmpty() }
-                .map { it.substringBefore('=').lowercase() to it.substringAfter('=', "") }
+    private fun magnetParams(url: String): List<Pair<String, String>> =
+        url
+            .substringAfter('?', missingDelimiterValue = "")
+            .substringBefore('#')
+            .split('&')
+            .filter { it.isNotEmpty() }
+            .map { it.substringBefore('=').lowercase() to it.substringAfter('=', "") }
+
+    private fun parseMagnet(url: String): TorrentLink? {
+        val params = magnetParams(url)
+        if (params.isEmpty()) return null
 
         val infoHash =
             params

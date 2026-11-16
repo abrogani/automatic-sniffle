@@ -1,8 +1,14 @@
 package com.abrogani.torrent.engine
 
 import android.content.Context
+import android.os.Build
+import android.os.Process
 import com.flixclusive.core.util.log.infoLog
 import dalvik.system.DexClassLoader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import java.io.File
@@ -10,19 +16,21 @@ import java.io.InputStream
 import java.lang.reflect.InvocationTargetException
 import java.security.MessageDigest
 
-/**
- * Process-wide engine state. The Go runtime loads once per process and TorrServer can't be restarted after
- * `stopTorrentServer`, so it is never stopped. System properties outlive a provider reload (which brings a
- * fresh copy of this object in a new class loader), letting the next copy find the engine already serving
- * instead of loading `libgojni.so` a second time, which the linker refuses across class loaders.
- */
 internal object EngineRuntime {
-    private const val PORT_PROPERTY = "abrogani.torrent.engine.port"
-    private const val LOADED_PROPERTY = "abrogani.torrent.engine.loaded"
+    private const val BINDINGS_PROPERTY = "abrogani.torrent.engine.bindings"
+
+    val flags = ProcessFlags.system
 
     val state = MutableStateFlow<EngineState>(EngineState.NotInstalled)
+
     val mutex = Mutex()
     val installMutex = Mutex()
+
+    val settingsMutex = Mutex()
+
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    var pendingStart: Deferred<Int?>? = null
 
     @Volatile
     var port: Int? = null
@@ -30,35 +38,43 @@ internal object EngineRuntime {
     @Volatile
     var verifiedLibrary: String? = null
 
+    val dropGeneration = MutableStateFlow(0)
+
     private var server: Class<*>? = null
 
-    /** Port of the engine this process started, possibly from an earlier provider instance. */
-    val startedPort: Int?
-        get() = System.getProperty(PORT_PROPERTY)?.toIntOrNull()
+    private val bindings: Class<*>?
+        get() = server ?: (System.getProperties()[BINDINGS_PROPERTY] as? Class<*>)
 
-    /** The native library is loaded in this process, but not through this class loader. */
-    val loadedElsewhere: Boolean
-        get() = server == null && System.getProperty(LOADED_PROPERTY) != null
+    val bindingsAvailable: Boolean get() = bindings != null
 
-    /**
-     * Loads the bindings if needed and starts TorrServer on [desiredPort]. Returns the real port, or -1 when
-     * TorrServer couldn't listen (typically the port is taken). Call with [mutex] held, off the main thread.
-     */
-    fun start(context: Context, engineDir: File, dataDir: File, desiredPort: Int, bindingsDex: () -> InputStream): Long {
-        val server = server ?: load(context, engineDir, bindingsDex)
+    fun processAbis(): List<String> =
+        EngineSource.processAbis(
+            is64Bit = Process.is64Bit(),
+            abis64 = Build.SUPPORTED_64_BIT_ABIS.toList(),
+            abis32 = Build.SUPPORTED_32_BIT_ABIS.toList(),
+        )
 
-        val port = invoke {
-            server.getMethod("startTorrentServer", String::class.java, Long::class.javaPrimitiveType)
-                .invoke(null, dataDir.absolutePath, desiredPort.toLong()) as Long
-        }
-        if (port > 0) {
-            System.setProperty(PORT_PROPERTY, port.toString())
+    fun start(context: Context, engineDir: File, dataDir: File, bindingsDex: () -> InputStream): Long {
+        val server = bindings ?: load(context, engineDir, bindingsDex)
+
+        return try {
             invoke {
-                server.getMethod("addTrackers", String::class.java)
-                    .invoke(null, EngineSource.DEFAULT_TRACKERS.joinToString(",\n"))
+                server.getMethod("startTorrentServer", String::class.java, Long::class.javaPrimitiveType)
+                    .invoke(null, dataDir.absolutePath, 0L) as Long
             }
+        } catch (e: Throwable) {
+            flags.startFailed = true
+            throw e
         }
-        return port
+    }
+
+    fun addTrackers(trackers: List<String>): Boolean {
+        val server = bindings ?: return false
+        invoke {
+            server.getMethod("addTrackers", String::class.java)
+                .invoke(null, trackers.joinToString(",\n"))
+        }
+        return true
     }
 
     private fun load(context: Context, engineDir: File, bindingsDex: () -> InputStream): Class<*> {
@@ -70,20 +86,18 @@ internal object EngineRuntime {
             TorrentEngine::class.java.classLoader,
         )
 
-        // This build defers loading to go.Seq.load(), which loads libgojni.so through `loader` (the class's
-        // defining loader, whose search path is the engine dir) and initialises the Go packages.
         val seq = Class.forName(EngineSource.SEQ_CLASS, true, loader)
-        System.setProperty(LOADED_PROPERTY, "true")
         invoke { seq.getMethod("load").invoke(null) }
+        flags.loaded = true
         invoke { seq.getMethod("setContext", Context::class.java).invoke(null, context) }
 
         return Class.forName(EngineSource.SERVER_CLASS, true, loader).also {
             server = it
+            System.getProperties()[BINDINGS_PROPERTY] = it
             infoLog("[Torrent] Loaded engine ${EngineSource.VERSION}")
         }
     }
 
-    // Android 14 refuses to load dex files that are writable.
     private fun prepareBindings(engineDir: File, bindingsDex: () -> InputStream): File {
         val dex = File(engineDir, "bindings.dex")
         if (dex.isFile && dex.sha256() == EngineSource.BINDINGS_DEX_SHA256) {

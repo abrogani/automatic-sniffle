@@ -8,7 +8,7 @@ import strikt.assertions.isNull
 
 class FileSelectorTest {
     private fun files(vararg entries: Pair<String, Long>) =
-        entries.mapIndexed { i, (path, length) -> TorrentFile(id = i + 1, path = path, length = length) }
+        entries.mapIndexed { i, (path, length) -> TorrentFile(id = i, path = path, length = length) }
 
     private fun episode(season: Int, number: Int) =
         Episode(id = "s${season}e$number", number = number, season = season, isReleased = true)
@@ -178,10 +178,27 @@ class FileSelectorTest {
     }
 
     @Test
-    fun `single video is returned even when the episode does not match`() {
+    fun `a lone video naming another episode is not guessed`() {
         val torrent = files("Show.S05E09.mkv" to 1, "Sample/show.sample.mkv" to 1, "info.nfo" to 1)
 
-        expectThat(torrent.select(episode(1, 1))).isEqualTo("Show.S05E09.mkv")
+        expectThat(torrent.select(episode(1, 1))).isNull()
+        expectThat(torrent.select(episode(5, 9))).isEqualTo("Show.S05E09.mkv")
+    }
+
+    @Test
+    fun `a lone video without season info is accepted for any episode`() {
+        expectThat(files("Some Episode Title.mkv" to 1).select(episode(2, 3))).isEqualTo("Some Episode Title.mkv")
+        expectThat(files("[Grp] Show - 25 (1080p).mkv" to 1).select(episode(2, 1))).isEqualTo("[Grp] Show - 25 (1080p).mkv")
+    }
+
+    @Test
+    fun `the season and episode overload matches the Episode one and keeps 0-based ids`() {
+        val torrent = files("Show.S01E01.mkv" to 1, "Show.S01E02.mkv" to 1)
+
+        expectThat(FileSelector.select(torrent, 1, 1)?.id).isEqualTo(0)
+        expectThat(FileSelector.select(torrent, 1, 2)?.id).isEqualTo(1)
+        expectThat(FileSelector.select(torrent, null, null)?.id).isEqualTo(0)
+        expectThat(FileSelector.select(torrent, 1, 3)).isNull()
     }
 
     @Test

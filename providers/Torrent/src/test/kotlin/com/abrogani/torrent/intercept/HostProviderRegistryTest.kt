@@ -9,7 +9,6 @@ import strikt.assertions.isFalse
 import strikt.assertions.isNull
 import strikt.assertions.isSameInstanceAs
 
-/** Fakes mirroring the shapes Hilt/Dagger 2.59 generate (see HostProviderRegistry's KDoc). */
 private class FakeDoubleCheck(provider: () -> Any) {
     @Volatile private var provider: (() -> Any)? = provider
 

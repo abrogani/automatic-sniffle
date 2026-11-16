@@ -2,10 +2,6 @@ package com.abrogani.torrent.engine
 
 import java.util.zip.ZipException
 
-/**
- * Just enough of the ZIP format to find one entry's byte range from the archive's tail, so the installer
- * can range-fetch a single ABI's library instead of the whole AAR. ZIP64 isn't supported.
- */
 internal object ZipDirectory {
     private const val EOCD_SIGNATURE = 0x06054b50L
     private const val CENTRAL_SIGNATURE = 0x02014b50L
@@ -13,7 +9,6 @@ internal object ZipDirectory {
     private const val CENTRAL_HEADER_SIZE = 46
     private const val MAX_COMMENT_SIZE = 0xFFFF
 
-    /** Bytes to fetch from the end of an archive to be sure the end-of-central-directory record is included. */
     const val TAIL_SIZE = EOCD_SIZE + MAX_COMMENT_SIZE
 
     data class EndRecord(val centralOffset: Long, val centralSize: Long, val entryCount: Int)
@@ -26,7 +21,6 @@ internal object ZipDirectory {
         val localHeaderOffset: Long,
     )
 
-    /** Where an entry's local header and data live: `[start, endExclusive)` in archive offsets. */
     data class EntryRange(val entry: CentralEntry, val start: Long, val endExclusive: Long) {
         val length get() = endExclusive - start
     }
@@ -73,10 +67,6 @@ internal object ZipDirectory {
         return entries
     }
 
-    /**
-     * The range from [name]'s local header up to the next entry (or the central directory), which covers
-     * the local header, its extra field and any data descriptor without having to read the local header first.
-     */
     fun locate(entries: List<CentralEntry>, end: EndRecord, name: String): EntryRange? {
         val entry = entries.firstOrNull { it.name == name } ?: return null
         val next = entries.asSequence()

@@ -28,13 +28,22 @@ internal object FileSelector {
 
     private data class EpisodeInfo(val season: Int?, val episodes: Set<Int>)
 
-    fun select(files: List<TorrentFile>, episode: Episode?): TorrentFile? {
+    fun select(files: List<TorrentFile>, episode: Episode?): TorrentFile? =
+        select(files, episode?.season, episode?.number)
+
+    fun select(files: List<TorrentFile>, season: Int?, episode: Int?): TorrentFile? {
         val videos = files.filter { isVideo(it.path) }
         val candidates = withoutExtras(videos).ifEmpty { videos }
         if (candidates.isEmpty()) return null
-        if (episode == null || candidates.size == 1) return candidates.maxByOrNull { it.length }
+        if (season == null || episode == null) return candidates.maxByOrNull { it.length }
 
-        val scored = candidates.map { it to score(it.path, episode) }
+        if (candidates.size == 1) {
+            val only = candidates.single()
+            val info = parseEpisode(only.path) ?: return only
+            return only.takeIf { info.season == null || (info.season == season && episode in info.episodes) }
+        }
+
+        val scored = candidates.map { it to score(it.path, season, episode) }
         val best = scored.maxOf { it.second }
         if (best == 0) return null
         return scored.filter { it.second == best }.maxByOrNull { it.first.length }?.first
@@ -42,10 +51,6 @@ internal object FileSelector {
 
     internal fun isVideo(path: String): Boolean = path.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS
 
-    /**
-     * Drops samples, trailers and bonus material. A word shared by most videos is part of the
-     * title rather than a marker ("Trailer Park Boys", "The Bonus Family"), so it is ignored.
-     */
     private fun withoutExtras(videos: List<TorrentFile>): List<TorrentFile> {
         val wordsByFile = videos.associateWith { extraWords(it.path) }
         val titleWords =
@@ -61,12 +66,11 @@ internal object FileSelector {
     private fun extraWords(path: String): Set<String> =
         EXTRA_WORDS.findAll(path.lowercase()).map { it.groupValues[1].replace(WORD_SEPARATOR, " ") }.toSet()
 
-    /** 2 = season and episode match, 1 = episode matches and the path names no season, 0 = no match. */
-    private fun score(path: String, episode: Episode): Int {
+    private fun score(path: String, season: Int, episode: Int): Int {
         val info = parseEpisode(path) ?: return 0
-        if (episode.number !in info.episodes) return 0
+        if (episode !in info.episodes) return 0
         return when (info.season) {
-            episode.season -> 2
+            season -> 2
             null -> 1
             else -> 0
         }

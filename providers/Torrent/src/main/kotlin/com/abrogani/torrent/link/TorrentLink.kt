@@ -1,6 +1,5 @@
 package com.abrogani.torrent.link
 
-/** A playable torrent reference found in some provider's Stream. */
 internal data class TorrentLink(
     val source: String,
     val infoHash: String?,

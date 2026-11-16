@@ -1,6 +1,5 @@
 package com.abrogani.torrent.intercept
 
-import com.abrogani.torrent.link.TorrentLink
 import com.abrogani.torrent.link.TorrentLinkRewriter
 import com.flixclusive.core.util.log.errorLog
 import com.flixclusive.model.media.MediaMetadata
@@ -10,11 +9,7 @@ import com.flixclusive.model.provider.link.Stream
 import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.capability.MediaLinkType
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
-/** Wraps another provider's link api, swapping its torrent [Stream]s for ones served by the local engine. */
 internal class InterceptingLinkApi(
     val inner: MediaLinkProviderApi,
     private val rewriter: TorrentLinkRewriter,
@@ -33,18 +28,19 @@ internal class InterceptingLinkApi(
             return
         }
 
-        // Returning only after every rewrite finished matters: the host reads its link cache right after getLinks returns.
-        coroutineScope {
-            inner.getLinks(media, episode) { link ->
-                // A provider that emits after its getLinks returned would hit a completed scope; pass those through.
-                if (link is Stream && isActive && TorrentLink.parse(link.url) != null) {
-                    launch { onLinkFound(rewriter.rewrite(link, episode) ?: link) }
-                } else {
-                    onLinkFound(link)
-                }
-            }
+        inner.getLinks(media, episode) { link ->
+            onLinkFound(if (link is Stream) rewrite(link, episode) else link)
         }
     }
+
+    private fun rewrite(stream: Stream, episode: Episode?): Stream =
+        try {
+            rewriter.rewrite(stream, episode) ?: stream
+        } catch (e: Exception) {
+            errorLog("[Torrent] Couldn't rewrite a torrent link, passing it through")
+            errorLog(e)
+            stream
+        }
 
     private suspend fun enabled(): Boolean =
         try {

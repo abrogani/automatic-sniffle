@@ -7,6 +7,7 @@ import com.abrogani.torrent.engine.TorrentEngine
 import com.abrogani.torrent.intercept.LinkInterceptor
 import com.abrogani.torrent.link.TorrentLinkRewriter
 import com.abrogani.torrent.net.LoopbackCleartext
+import com.abrogani.torrent.proxy.LinkProxy
 import com.abrogani.torrent.settings.DEFAULT_INTERCEPT
 import com.abrogani.torrent.settings.DEFAULT_PORT
 import com.abrogani.torrent.settings.INTERCEPT_KEY
@@ -19,9 +20,11 @@ import com.flixclusive.provider.FlixclusiveProvider
 import com.flixclusive.provider.ProviderPlugin
 import com.flixclusive.provider.extensions.getBool
 import com.flixclusive.provider.extensions.getInt
+import com.flixclusive.provider.extensions.setInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -32,13 +35,13 @@ import okhttp3.OkHttpClient
 class Torrent : ProviderPlugin() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client by lazy { OkHttpClient() }
+    private var portChange: Job? = null
 
-    // `settings` and `resources` are injected after construction; these lambdas only run later.
     private val engine by lazy {
         TorrentEngine(
             context = application,
             client = client,
-            port = { settings.getInt(PORT_KEY, DEFAULT_PORT).takeIf { it.isValidPort() } ?: DEFAULT_PORT },
+            store = { settings },
             bindingsDex = {
                 val res = resources ?: throw IllegalStateException("Torrent provider resources are missing")
                 res.assets.open(BINDINGS_ASSET)
@@ -49,23 +52,23 @@ class Torrent : ProviderPlugin() {
     private val interceptor by lazy {
         LinkInterceptor(
             self = this,
-            rewriter = TorrentLinkRewriter(backend = engine),
+            rewriter = TorrentLinkRewriter(proxyPort = { proxy.port }, engineInstalled = { engine.hasEngineFiles }),
             isEnabled = { settings.getBool(INTERCEPT_KEY, DEFAULT_INTERCEPT) },
         )
     }
+
+    private val proxy by lazy { LinkProxy(engine) }
 
     private val application: Context by lazy {
         currentApplication() ?: throw IllegalStateException("Could not find the app's context")
     }
 
     init {
-        // There is no onLoad hook and this provider has no capability the host would call, so the
-        // interception starts here. The host registers this instance right after constructing it.
         scope.launch {
             try {
                 LoopbackCleartext.install()
                 interceptor.install(application)
-                startEngineIfInstalled()
+                startProxy()
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 errorLog(e)
@@ -73,25 +76,17 @@ class Torrent : ProviderPlugin() {
         }
     }
 
-    /**
-     * The host replays cached links without asking providers again, so an engine that only started
-     * on the first torrent link would leave cached loopback links dead after an app restart.
-     */
-    private suspend fun startEngineIfInstalled() {
+    private suspend fun startProxy() {
         awaitInjectedSettings() ?: return
-        if (!settings.getBool(INTERCEPT_KEY, DEFAULT_INTERCEPT) || !engine.hasEngineFiles) return
-
-        runCatching { engine.ensureRunning() }
-            .onFailure { if (it is CancellationException) throw it }
+        proxy.start(settings.getInt(PORT_KEY, DEFAULT_PORT).takeIf { it.isValidPort() } ?: DEFAULT_PORT)
     }
 
-    // `settings` is a lateinit the host sets right after construction, which can race this coroutine.
     private suspend fun awaitInjectedSettings(): Unit? {
         repeat(SETTINGS_WAIT_ATTEMPTS) {
             if (runCatching { settings }.isSuccess) return Unit
             delay(SETTINGS_WAIT_STEP_MILLIS)
         }
-        warnLog("[Torrent] Settings were never injected; not starting the engine early")
+        warnLog("[Torrent] Settings were never injected; not starting the torrent proxy")
         return null
     }
 
@@ -100,16 +95,28 @@ class Torrent : ProviderPlugin() {
         TorrentSettingsScreen(
             settings = settings,
             engine = engine,
-            isInterceptorInstalled = interceptor.isInstalled,
+            isInterceptorInstalled = { interceptor.isInstalled },
+            proxyPort = { proxy.port },
+            onPortChange = ::changeProxyPort,
+            backgroundScope = scope,
         )
+    }
+
+    private fun changeProxyPort(port: Int) {
+        portChange?.cancel()
+        portChange = scope.launch {
+            settings.setInt(PORT_KEY, port)
+            delay(PORT_CHANGE_DEBOUNCE_MILLIS)
+            proxy.start(port)
+        }
     }
 
     override suspend fun onUnload(context: Context) {
         scope.cancel()
         interceptor.uninstall()
+        proxy.stop()
         LoopbackCleartext.uninstall()
 
-        // The engine keeps running: Go can't be loaded twice in one process, so a reload reuses it.
         runCatching { engine.dropAll() }
             .onFailure { warnLog("[Torrent] Could not drop torrents on unload: $it") }
     }
@@ -118,6 +125,7 @@ class Torrent : ProviderPlugin() {
         const val BINDINGS_ASSET = "torrserver/bindings.dex"
         const val SETTINGS_WAIT_ATTEMPTS = 100
         const val SETTINGS_WAIT_STEP_MILLIS = 100L
+        const val PORT_CHANGE_DEBOUNCE_MILLIS = 800L
 
         @SuppressLint("PrivateApi")
         fun currentApplication(): Context? =

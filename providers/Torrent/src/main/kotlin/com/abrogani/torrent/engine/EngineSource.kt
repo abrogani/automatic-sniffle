@@ -1,15 +1,5 @@
 package com.abrogani.torrent.engine
 
-/**
- * Where the TorrServer engine comes from: CloudStream's gomobile build of TorrServer
- * (`com.github.recloudstream:torrentserver:7861970` on jitpack). Its licence is unstated (upstream
- * TorrServer is GPL-3.0), so the native library is downloaded on demand and never bundled.
- *
- * `assets/torrserver/bindings.dex` holds the AAR's Java bindings (`go.Seq`, `torrServer.TorrServer`). They
- * can't live in the .flx dex because `go.Seq.load()` calls `System.loadLibrary("gojni")`, which resolves through
- * the defining class loader. Produced from the AAR's `classes.jar` (sha256 792029709516fde134cd8c2eead8da2aa6c9eca27185107172917d088e3c3b22) with
- * `d8 --release --min-api 23 --lib android-36/android.jar --output out classes.jar` (build-tools 36.1.0).
- */
 internal object EngineSource {
     const val VERSION = "7861970"
     const val AAR_URL = "https://jitpack.io/com/github/recloudstream/torrentserver/7861970/torrentserver-7861970.aar"
@@ -20,7 +10,6 @@ internal object EngineSource {
     const val SEQ_CLASS = "go.Seq"
     const val SERVER_CLASS = "torrServer.TorrServer"
 
-    /** sha256 of the inflated `jni/<abi>/libgojni.so`. */
     val LIBRARY_SHA256 = linkedMapOf(
         "arm64-v8a" to "4e956a0a410cba3edafa22573721c1be66fdec0253c85ecf014109826c941079",
         "armeabi-v7a" to "33307814802a7f4342be67837234f3f247defb74b352d8620b43ccefed0156ee",
@@ -31,9 +20,11 @@ internal object EngineSource {
     const val MAX_ARCHIVE_BYTES = 64L * 1024 * 1024
     const val MAX_LIBRARY_BYTES = 32L * 1024 * 1024
 
-    /** First ABI in the device's preference order that the engine ships, or null. */
     fun selectAbi(supportedAbis: List<String>): String? =
         supportedAbis.firstOrNull { it in LIBRARY_SHA256 }
+
+    fun processAbis(is64Bit: Boolean, abis64: List<String>, abis32: List<String>): List<String> =
+        if (is64Bit) abis64 else abis32
 
     fun entryName(abi: String) = "jni/$abi/$LIBRARY_NAME"
 
