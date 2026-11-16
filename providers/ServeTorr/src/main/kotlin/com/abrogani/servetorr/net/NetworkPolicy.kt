@@ -14,6 +14,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 internal enum class Transport { WIFI, ETHERNET, CELLULAR, VPN, OTHER }
@@ -39,6 +43,9 @@ internal class NetworkPolicy(
     private val lock = Any()
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var pending: Job? = null
+    private val _allowedAgain = MutableStateFlow(0L)
+
+    val allowedAgain: StateFlow<Long> = _allowedAgain.asStateFlow()
 
     suspend fun blockReason(): String? {
         if (!wifiOnly()) return null
@@ -100,7 +107,7 @@ internal class NetworkPolicy(
                 scope.launch {
                     delay(DEBOUNCE_MILLIS)
                     try {
-                        if (blockReason() != null) onBlocked()
+                        if (blockReason() != null) onBlocked() else _allowedAgain.update { it + 1 }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {

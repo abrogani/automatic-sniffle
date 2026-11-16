@@ -14,6 +14,7 @@ import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
@@ -24,9 +25,10 @@ internal class EngineInstaller(client: OkHttpClient) {
 
     suspend fun install(abi: String, engineDir: File, onProgress: (Long, Long) -> Unit) = withIOContext {
         val files = EngineSource.engineFiles(abi) ?: throw IllegalArgumentException("Unsupported ABI $abi")
+        val attempt = UUID.randomUUID().toString()
         val temps = files.associate { file ->
             file.entryName to ExtractTarget(
-                file = File(engineDir, "${file.fileName}.tmp").also { it.setWritable(true); it.delete() },
+                file = File(engineDir, "${file.fileName}.$attempt.tmp").also { it.setWritable(true); it.delete() },
                 sha256 = file.sha256,
                 maxBytes = file.maxBytes,
             )
@@ -79,7 +81,7 @@ internal class EngineInstaller(client: OkHttpClient) {
         }.build()
 
         downloadClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("Engine download failed [${response.code}]")
+            downloadFailure(response.code)?.let { throw it }
 
             val total = when {
                 knownTotal != null && response.code == 206 -> knownTotal
@@ -103,7 +105,7 @@ internal class EngineInstaller(client: OkHttpClient) {
             .build()
 
         val (tail, archiveSize) = downloadClient.newCall(tailRequest).execute().use { response ->
-            if (response.code != 206) throw RangeNotSupported()
+            rangeFailure(response.code)?.let { throw it }
             val size = response.archiveSize() ?: throw RangeNotSupported()
             response.body.bytes() to size
         }
@@ -133,12 +135,14 @@ internal class EngineInstaller(client: OkHttpClient) {
             .build()
 
         return downloadClient.newCall(request).execute().use { response ->
-            if (response.code != 206) throw RangeNotSupported()
+            rangeFailure(response.code)?.let { throw it }
             response.body.bytes()
         }
     }
 
-    private class RangeNotSupported : IOException()
+    internal class RangeNotSupported : IOException()
+
+    internal class EngineNotPublished(version: String) : IOException("Engine v$version isn't published yet.")
 
     internal data class ExtractTarget(val file: File, val sha256: String, val maxBytes: Long)
 
@@ -174,6 +178,22 @@ internal class EngineInstaller(client: OkHttpClient) {
 
     internal companion object {
         private const val PROGRESS_STEP = 64L * 1024
+
+        private const val NOT_FOUND = 404
+
+        fun rangeFailure(code: Int): IOException? =
+            when (code) {
+                206 -> null
+                NOT_FOUND -> EngineNotPublished(EngineSource.VERSION)
+                else -> RangeNotSupported()
+            }
+
+        fun downloadFailure(code: Int): IOException? =
+            when {
+                code in 200..299 -> null
+                code == NOT_FOUND -> EngineNotPublished(EngineSource.VERSION)
+                else -> IOException("Engine download failed [$code]")
+            }
 
         private val CONTENT_RANGE_TOTAL = Regex("""bytes \d+-\d+/(\d+)""")
 

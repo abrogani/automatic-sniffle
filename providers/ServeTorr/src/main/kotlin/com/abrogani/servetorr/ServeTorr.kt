@@ -4,10 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import androidx.compose.runtime.Composable
 import com.abrogani.servetorr.engine.EngineState
+import com.abrogani.servetorr.engine.PluginRegistration
 import com.abrogani.servetorr.engine.TorrentEngine
 import com.abrogani.servetorr.engine.UninstallCleanup
 import com.abrogani.servetorr.intercept.HostLinkCache
+import com.abrogani.servetorr.intercept.HostProviderRegistry
 import com.abrogani.servetorr.intercept.HostCapability
+import com.abrogani.servetorr.intercept.StaleLinkPolicy
+import com.abrogani.servetorr.intercept.StreamsToggle
 import com.abrogani.servetorr.intercept.LinkInterceptor
 import com.abrogani.servetorr.link.TorrentLinkRewriter
 import com.abrogani.servetorr.net.LoopbackCleartext
@@ -32,22 +36,25 @@ import com.flixclusive.provider.extensions.getBoolAsFlow
 import com.flixclusive.provider.extensions.getInt
 import com.flixclusive.provider.extensions.setInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 @FlixclusiveProvider
 class ServeTorr : ProviderPlugin() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> errorLog(e) })
     private val client by lazy { OkHttpClient() }
     private var portChange: Job? = null
 
@@ -68,6 +75,10 @@ class ServeTorr : ProviderPlugin() {
         )
     }
 
+    private val capability by lazy { HostCapability(context = { application }, self = this) }
+
+    private val streamsToggle = MutableStateFlow<StreamsToggle?>(null)
+
     private val proxy by lazy { LinkProxy(engine, blockReason = network::blockReason) }
 
     private val network by lazy { NetworkPolicy(application, wifiOnly = { settings.getBool(WIFI_ONLY_KEY, DEFAULT_WIFI_ONLY) }) }
@@ -81,6 +92,7 @@ class ServeTorr : ProviderPlugin() {
             try {
                 LoopbackCleartext.install()
                 interceptor.install(application)
+                scope.launch { watchStreamsToggle() }
                 startProxy()
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -112,18 +124,29 @@ class ServeTorr : ProviderPlugin() {
     }
 
     private suspend fun purgeStaleLinks() {
-        HostLinkCache.purgeStaleTorrentLinks(application, proxy.port, engine.hasEngineFiles)
+        val policy = StaleLinkPolicy.forInterception(interceptionEnabled(), proxy.port, engine.hasEngineFiles)
+        HostLinkCache.purge(application, policy)
     }
 
-    private suspend fun interceptionEnabled(): Boolean =
-        HostCapability.isMediaLinkEnabled(application, this) != false
+    private suspend fun watchStreamsToggle() {
+        capability.changes().collect { toggle ->
+            val previous = streamsToggle.value
+            streamsToggle.value = toggle
+            StaleLinkPolicy.onToggleChange(previous, toggle, proxy.port, engine.hasEngineFiles)
+                ?.let { HostLinkCache.purge(application, it) }
+        }
+    }
+
+    private suspend fun interceptionEnabled(): Boolean = capability.current().intercepts
 
     override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi = PlaceholderLinkApi
 
     private suspend fun updateEngineIfNeeded() {
-        if (!engine.updateWanted()) return
-        while (network.blockReason() != null) delay(ENGINE_UPDATE_RETRY_MILLIS)
-        engine.install()
+        engine.autoUpdate(
+            blockReason = network::blockReason,
+            wakeups = merge(network.allowedAgain, settings.getBoolAsFlow(WIFI_ONLY_KEY, DEFAULT_WIFI_ONLY)),
+            stillCurrent = { PluginRegistration.isRegistered(this) { HostProviderRegistry.findPluginsFlow(application)?.value?.values } },
+        )
     }
 
     private suspend fun stopEngineIfBlocked() {
@@ -149,7 +172,7 @@ class ServeTorr : ProviderPlugin() {
             settings = settings,
             engine = engine,
             isInterceptorInstalled = { interceptor.isInstalled },
-            linksCapabilityEnabled = { HostCapability.isMediaLinkEnabled(application, this) },
+            streamsToggle = streamsToggle,
             proxyPort = { proxy.port },
             onPortChange = ::changeProxyPort,
             backgroundScope = scope,
@@ -184,7 +207,6 @@ class ServeTorr : ProviderPlugin() {
         const val SETTINGS_WAIT_ATTEMPTS = 100
         const val SETTINGS_WAIT_STEP_MILLIS = 100L
         const val PORT_CHANGE_DEBOUNCE_MILLIS = 800L
-        const val ENGINE_UPDATE_RETRY_MILLIS = 15L * 60 * 1000
 
         @SuppressLint("PrivateApi")
         fun currentApplication(): Context? =

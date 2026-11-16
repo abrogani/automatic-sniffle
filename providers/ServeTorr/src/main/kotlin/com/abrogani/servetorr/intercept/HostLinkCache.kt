@@ -20,15 +20,38 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 internal class StaleLinkPolicy(
     private val currentProxyPort: Int?,
     private val purgeRawTorrents: Boolean,
+    private val purgeProxyUrls: Boolean = false,
 ) {
+    val purgesNothing: Boolean
+        get() = currentProxyPort == null && !purgeProxyUrls
+
     fun isStale(url: String): Boolean {
         val proxyPort = proxyPortOf(url)
-        if (proxyPort != null) return currentProxyPort != null && proxyPort != currentProxyPort
+        if (proxyPort != null) return purgeProxyUrls || (currentProxyPort != null && proxyPort != currentProxyPort)
         return purgeRawTorrents && currentProxyPort != null && TorrentLink.parse(url) != null
     }
 
     companion object {
         private const val LOOPBACK = "127.0.0.1"
+
+        fun forInterception(enabled: Boolean, currentProxyPort: Int?, engineInstalled: Boolean): StaleLinkPolicy =
+            if (enabled) {
+                StaleLinkPolicy(currentProxyPort, purgeRawTorrents = engineInstalled)
+            } else {
+                StaleLinkPolicy(currentProxyPort = null, purgeRawTorrents = false, purgeProxyUrls = true)
+            }
+
+        fun onToggleChange(
+            previous: StreamsToggle?,
+            current: StreamsToggle,
+            currentProxyPort: Int?,
+            engineInstalled: Boolean,
+        ): StaleLinkPolicy? {
+            val enabled = current.intercepts
+            if (previous == null && enabled) return null
+            if (previous != null && previous.intercepts == enabled) return null
+            return forInterception(enabled, currentProxyPort, engineInstalled).takeUnless { it.purgesNothing }
+        }
 
         fun proxyPortOf(url: String): Int? {
             val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return null
@@ -66,8 +89,8 @@ internal object HostLinkCache {
         val group get() = listOf(mediaId, providerId, seasonNumber, episodeNumber)
     }
 
-    suspend fun purgeStaleTorrentLinks(context: Context, currentProxyPort: Int?, engineInstalled: Boolean): Int {
-        if (currentProxyPort == null) return 0
+    suspend fun purge(context: Context, policy: StaleLinkPolicy): Int {
+        if (policy.purgesNothing) return 0
         return try {
             lock.withLock {
                 val app: Any = context.applicationContext ?: context
@@ -75,8 +98,8 @@ internal object HostLinkCache {
                     ?: return@withLock failed("${app.javaClass.name} exposes no Hilt component")
                 val database = findDatabaseIn(component)
                     ?: return@withLock failed("no link database in ${component.javaClass.name}")
-                val removed = purgeIn(database, StaleLinkPolicy(currentProxyPort, engineInstalled))
-                if (removed > 0) infoLog("[ServeTorr] Removed $removed cached links that pointed at raw torrents or an old proxy port")
+                val removed = purgeIn(database, policy)
+                if (removed > 0) infoLog("[ServeTorr] Removed $removed cached links ServeTorr no longer matches")
                 removed
             }
         } catch (e: Throwable) {

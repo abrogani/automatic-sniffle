@@ -1,5 +1,7 @@
 package com.abrogani.servetorr.engine
 
+import java.security.MessageDigest
+
 internal object EngineSource {
     const val VERSION = "1"
     const val AAR_URL = "https://github.com/abrogani/servetorr-engine/releases/download/v$VERSION/torrserver.aar"
@@ -39,6 +41,19 @@ internal object EngineSource {
             EngineFile(entryName(abi), LIBRARY_NAME, library, MAX_LIBRARY_BYTES),
             EngineFile(DEX_ENTRY, DEX_NAME, DEX_SHA256, MAX_DEX_BYTES),
         )
+    }
+
+    fun pinFingerprint(abi: String): String? =
+        engineFiles(abi)?.let { files -> fingerprint(VERSION, files.map { it.fileName to it.sha256 }) }
+
+    fun fingerprint(version: String, hashes: List<Pair<String, String>>): String {
+        val text = buildString {
+            append(version)
+            hashes.sortedBy { it.first }.forEach { (name, sha256) -> append('\n').append(name).append('=').append(sha256.lowercase()) }
+        }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(text.toByteArray())
+            .joinToString("") { "%02x".format(it) }
     }
 
     val DEFAULT_TRACKERS = listOf(
