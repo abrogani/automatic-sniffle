@@ -20,6 +20,9 @@ jobs:
         with:
           java-version: 17
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4.0.4
+
       - name: Initialize Secrets
         env:
           SUPERSTREAM_FIRST_API: ${{ secrets.SUPERSTREAM_FIRST_API }}
@@ -88,6 +91,12 @@ jobs:
           echo GojoAPI=$GojoAPI >> local.properties
           echo ANICHI_API=$ANICHI_API >> local.properties
           echo CatflixAPI=$CatflixAPI >> local.properties
+
+      - name: Initialize cloudstream.jar
+        run: |
+          cd $GITHUB_WORKSPACE/src
+          chmod +x gradlew
+          ./gradlew getCSJar
 
       # Change `**/**/build/*.flx` if you've changed the providers file structure.
       - name: Build providers
