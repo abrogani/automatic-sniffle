@@ -23,6 +23,7 @@ class ZipDirectoryTest {
 
     private val payloads = linkedMapOf(
         "AndroidManifest.xml" to "<manifest/>".toByteArray(),
+        "classes.dex" to Random(4).nextBytes(10_000),
         "jni/arm64-v8a/libgojni.so" to Random(1).nextBytes(200_000),
         "jni/x86_64/libgojni.so" to Random(2).nextBytes(150_000),
         "R.txt" to ByteArray(0),
@@ -53,7 +54,7 @@ class ZipDirectoryTest {
     fun `central directory lists every entry`() {
         val (end, entries) = entries(archive())
 
-        expectThat(end.entryCount).isEqualTo(4)
+        expectThat(end.entryCount).isEqualTo(5)
         expectThat(entries.map { it.name }).containsExactly(payloads.keys)
         expectThat(entries.first { it.name == "jni/x86_64/libgojni.so" }.uncompressedSize).isEqualTo(150_000)
     }
@@ -62,7 +63,7 @@ class ZipDirectoryTest {
     fun `end record is found behind an archive comment`() {
         val (end, entries) = entries(archive(comment = "PK\u0005\u0006 looks like a signature"))
 
-        expectThat(end.entryCount).isEqualTo(4)
+        expectThat(end.entryCount).isEqualTo(5)
         expectThat(entries.map { it.name }).containsExactly(payloads.keys)
     }
 
@@ -111,6 +112,65 @@ class ZipDirectoryTest {
 
         expectThrows<SecurityException> {
             EngineInstaller.extractEntry(archive().inputStream(), "jni/x86_64/libgojni.so", out, "00".repeat(32))
+        }
+    }
+
+    private fun sha256(name: String) = MessageDigest.getInstance("SHA-256").digest(payloads.getValue(name)).toHex()
+
+    @Test
+    fun `whole archive stream yields the library and the dex in one pass`() {
+        val so = temp.newFile()
+        val dex = temp.newFile()
+
+        EngineInstaller.extractEntries(
+            archive().inputStream(),
+            mapOf(
+                "jni/arm64-v8a/libgojni.so" to EngineInstaller.ExtractTarget(so, sha256("jni/arm64-v8a/libgojni.so"), 1_000_000),
+                "classes.dex" to EngineInstaller.ExtractTarget(dex, sha256("classes.dex"), 1_000_000),
+            ),
+        )
+
+        expectThat(so.readBytes().contentEquals(payloads.getValue("jni/arm64-v8a/libgojni.so"))).isEqualTo(true)
+        expectThat(dex.readBytes().contentEquals(payloads.getValue("classes.dex"))).isEqualTo(true)
+    }
+
+    @Test
+    fun `located dex slice inflates to the dex`() {
+        val zip = archive()
+        val (end, entries) = entries(zip)
+        val range = ZipDirectory.locate(entries, end, "classes.dex")!!
+        val out = temp.newFile()
+
+        EngineInstaller.extractEntries(
+            zip.copyOfRange(range.start.toInt(), range.endExclusive.toInt()).inputStream(),
+            mapOf("classes.dex" to EngineInstaller.ExtractTarget(out, sha256("classes.dex"), 1_000_000)),
+        )
+
+        expectThat(out.length()).isEqualTo(10_000)
+    }
+
+    @Test
+    fun `a missing wanted entry fails the extraction`() {
+        val dex = temp.newFile()
+
+        expectThrows<java.io.IOException> {
+            EngineInstaller.extractEntries(
+                archive().inputStream(),
+                mapOf(
+                    "classes.dex" to EngineInstaller.ExtractTarget(dex, sha256("classes.dex"), 1_000_000),
+                    "jni/x86/libgojni.so" to EngineInstaller.ExtractTarget(temp.newFile(), "00".repeat(32), 1_000_000),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `an entry over its size limit is rejected`() {
+        expectThrows<SecurityException> {
+            EngineInstaller.extractEntries(
+                archive().inputStream(),
+                mapOf("classes.dex" to EngineInstaller.ExtractTarget(temp.newFile(), sha256("classes.dex"), 9_999)),
+            )
         }
     }
 

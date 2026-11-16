@@ -91,11 +91,18 @@ class LinkProxyTest {
     @After
     fun tearDown() = proxies.forEach { it.stop() }
 
-    private fun proxy(backend: TorrentBackend, timeout: Duration = 5.seconds, readTimeoutMillis: Int = 5_000) =
-        LinkProxy(backend, resolveTimeout = timeout, readTimeoutMillis = readTimeoutMillis).also { proxies += it }
+    private fun proxy(
+        backend: TorrentBackend,
+        timeout: Duration = 5.seconds,
+        readTimeoutMillis: Int = 5_000,
+        blockReason: suspend () -> String? = { null },
+    ) = LinkProxy(backend, blockReason = blockReason, resolveTimeout = timeout, readTimeoutMillis = readTimeoutMillis).also { proxies += it }
 
-    private fun started(backend: TorrentBackend, timeout: Duration = 5.seconds): Int =
-        runBlocking { proxy(backend, timeout).start(0)!! }
+    private fun started(
+        backend: TorrentBackend,
+        timeout: Duration = 5.seconds,
+        blockReason: suspend () -> String? = { null },
+    ): Int = runBlocking { proxy(backend, timeout, blockReason = blockReason).start(0)!! }
 
     private fun raw(port: Int, request: String): String =
         Socket().use { socket ->
@@ -193,6 +200,40 @@ class LinkProxyTest {
         expectThat(reply.status).isEqualTo(503)
         expectThat(reply.body).contains("isn't installed")
         expectThat(backend.fileCalls.get()).isEqualTo(0)
+    }
+
+    @Test
+    fun `a blocked network is a 503 with the reason and never starts the engine`() {
+        val backend = FakeBackend(files = { error("must not list") })
+        val port = started(backend, blockReason = { "Wi-Fi only is on and this device isn't on Wi-Fi." })
+
+        val get = request(port, target())
+        val head = request(port, target(season = 1, episode = 1), method = "HEAD")
+
+        expectThat(get.status).isEqualTo(503)
+        expectThat(get.body).isEqualTo("Wi-Fi only is on and this device isn't on Wi-Fi.")
+        expectThat(head.status).isEqualTo(503)
+        expectThat(head.body).isEqualTo("")
+        expectThat(backend.starts.get()).isEqualTo(0)
+        expectThat(backend.fileCalls.get()).isEqualTo(0)
+        expectThat(request(port, LinkProxy.PING_PATH).status).isEqualTo(200)
+    }
+
+    @Test
+    fun `the block is checked on every request`() {
+        val blocked = AtomicInteger(1)
+        val backend = FakeBackend(files = { seasonPack })
+        val port = started(backend, blockReason = { if (blocked.get() == 1) "blocked" else null })
+
+        val first = request(port, target())
+        blocked.set(0)
+        val second = request(port, target())
+        blocked.set(1)
+        val third = request(port, target())
+
+        expectThat(listOf(first.status, second.status, third.status)).isEqualTo(listOf(503, 302, 503))
+        expectThat(backend.starts.get()).isEqualTo(1)
+        expectThat(backend.fileCalls.get()).isEqualTo(1)
     }
 
     @Test

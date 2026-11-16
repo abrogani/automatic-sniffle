@@ -1,6 +1,7 @@
 package com.abrogani.servetorr.engine
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import com.abrogani.servetorr.engine.EngineRuntime.sha256
@@ -17,23 +18,26 @@ import com.flixclusive.provider.extensions.getString
 import com.flixclusive.provider.extensions.setString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.IOException
-import java.io.InputStream
+import java.util.UUID
 
 internal class TorrentEngine(
     context: Context,
     client: OkHttpClient,
     private val store: () -> DataStore<Preferences>,
-    private val bindingsDex: () -> InputStream,
+    private val idleStopMinutes: suspend () -> Int,
 ) : TorrentBackend {
     private val appContext = context.applicationContext ?: context
     private val installer = EngineInstaller(client)
@@ -51,11 +55,13 @@ internal class TorrentEngine(
     @Volatile
     private var settingsLoaded = false
 
-    private val rootDir get() = File(appContext.filesDir, "torrent/engine")
-    private val engineDir get() = File(rootDir, EngineSource.VERSION)
-    private val libraryFile get() = File(engineDir, EngineSource.LIBRARY_NAME)
-    private val dataDir get() = File(appContext.cacheDir, "torrent/server")
-    private val diskCacheDir get() = File(appContext.cacheDir, "torrent/cache")
+    private val layout get() = EngineLayout(appContext.filesDir, appContext.cacheDir, EngineSource.VERSION)
+    private val rootDir get() = layout.engineRoot
+    private val engineDir get() = layout.engineDir
+    private val libraryFile get() = layout.libraryFile
+    private val dexFile get() = layout.dexFile
+    private val dataDir get() = layout.dataDir
+    private val diskCacheDir get() = layout.diskCacheDir
 
     init {
         when (EngineRuntime.state.value) {
@@ -65,14 +71,21 @@ internal class TorrentEngine(
     }
 
     override suspend fun ensureRunning(): Int? {
-        EngineRuntime.port?.let { return it }
+        livePort()?.let { return it }
 
         val start = EngineRuntime.mutex.withLock {
-            EngineRuntime.port?.let { return it }
+            livePort()?.let { return it }
             EngineRuntime.pendingStart?.takeIf { it.isActive }
                 ?: EngineRuntime.scope.async { startReportingFailure() }.also { EngineRuntime.pendingStart = it }
         }
         return start.await()
+    }
+
+    private fun livePort(): Int? {
+        val port = EngineRuntime.port ?: return null
+        if (EngineRuntime.flags.startedPort == port) return port
+        EngineRuntime.port = null
+        return null
     }
 
     private suspend fun startReportingFailure(): Int? =
@@ -119,7 +132,7 @@ internal class TorrentEngine(
 
         val result = withIOContext {
             dataDir.mkdirs()
-            EngineRuntime.start(appContext, engineDir, dataDir, bindingsDex)
+            EngineRuntime.start(appContext, engineDir, dataDir)
         }
         val port = EngineStartPolicy.recordStart(flags, result)
             ?: throw EngineRestartRequired(EngineStartPolicy.START_FAILED_MESSAGE)
@@ -153,7 +166,55 @@ internal class TorrentEngine(
     private fun running(port: Int): Int {
         EngineRuntime.port = port
         EngineRuntime.state.value = EngineState.Running(port)
+        watchIdle(port)
         return port
+    }
+
+    private fun watchIdle(port: Int) {
+        val token = UUID.randomUUID().toString()
+        System.setProperty(IDLE_WATCHER_PROPERTY, token)
+        EngineRuntime.idleWatcher?.cancel()
+        EngineRuntime.idleWatcher = EngineRuntime.scope.launch {
+            val timer = IdleStopTimer(SystemClock::elapsedRealtime)
+            while (isActive) {
+                delay(IDLE_POLL_MILLIS)
+                if (!ownsWatcher(token, port)) break
+
+                val minutes = try {
+                    idleStopMinutes()
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    0
+                }
+                if (!timer.shouldStop(isBusy(port), minutes)) continue
+                if (!ownsWatcher(token, port) || isBusy(port)) continue
+
+                infoLog("[ServeTorr] No torrents for $minutes min; stopping the engine")
+                try {
+                    stop()
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    warnLog("[ServeTorr] Could not stop the idle engine: ${e.message}")
+                    continue
+                }
+                break
+            }
+        }
+    }
+
+    private fun ownsWatcher(token: String, port: Int): Boolean =
+        System.getProperty(IDLE_WATCHER_PROPERTY) == token &&
+            EngineRuntime.port == port &&
+            EngineRuntime.flags.startedPort == port
+
+    private suspend fun isBusy(port: Int): Boolean {
+        if (EngineRuntime.activeResolutions.get() > 0) return true
+        if (EngineRuntime.pendingStart?.isActive == true) return true
+        return try {
+            api.list(port).any { TorrentInventory.isActive(it.stat) }
+        } catch (e: IOException) {
+            true
+        }
     }
 
     private suspend fun <T> withEngine(block: suspend (port: Int) -> T): T {
@@ -173,15 +234,22 @@ internal class TorrentEngine(
         }
     }
 
-    val hasEngineFiles: Boolean get() = libraryFile.isFile
+    val hasEngineFiles: Boolean get() = libraryFile.isFile && dexFile.isFile
 
     override suspend fun files(link: TorrentLink): List<TorrentFile> = metadata(link).files
 
     override suspend fun infoHash(link: TorrentLink): String? =
         link.infoHash?.takeIf { it.isNotBlank() }?.lowercase() ?: metadata(link).hash.takeIf { it.isNotBlank() }
 
-    private suspend fun metadata(link: TorrentLink): TorrentMetadata = withEngine { port ->
-        api.metadata(port, link.source, link.infoHash, METADATA_TIMEOUT_MILLIS, EngineRuntime.dropGeneration)
+    private suspend fun metadata(link: TorrentLink): TorrentMetadata {
+        EngineRuntime.activeResolutions.incrementAndGet()
+        try {
+            return withEngine { port ->
+                api.metadata(port, link.source, link.infoHash, METADATA_TIMEOUT_MILLIS, EngineRuntime.dropGeneration)
+            }
+        } finally {
+            EngineRuntime.activeResolutions.decrementAndGet()
+        }
     }
 
     suspend fun dropAll(): Int {
@@ -197,6 +265,108 @@ internal class TorrentEngine(
         }
     }
 
+    suspend fun torrents(): List<TorrentInfo> {
+        val disk = withIOContext { TorrentInventory.diskCache(diskCacheDir) }
+        val port = livePort() ?: return TorrentInventory.merge(emptyList(), disk)
+        val statuses = try {
+            api.list(port)
+        } catch (e: IOException) {
+            warnLog("[ServeTorr] Could not list the engine's torrents: ${e.message}")
+            emptyList()
+        }
+        return TorrentInventory.merge(statuses, disk)
+    }
+
+    suspend fun removeTorrent(hash: String) {
+        val key = requireNotNull(TorrentInventory.normalizeHash(hash)) { "Not a torrent info hash: $hash" }
+        EngineRuntime.mutex.withLock {
+            val port = livePort()
+            if (port != null) {
+                try {
+                    api.remove(port, key)
+                    try {
+                        api.removeViewed(port, key)
+                    } catch (e: IOException) {
+                        warnLog("[ServeTorr] Could not clear the viewed state of $key: ${e.message}")
+                    }
+                } finally {
+                    EngineRuntime.dropGeneration.update { it + 1 }
+                }
+            }
+            val freed = withIOContext {
+                TorrentInventory.cacheDirsOf(diskCacheDir, key).sumOf { dir ->
+                    TorrentInventory.sizeOf(dir).also { dir.deleteTree() }
+                }
+            }
+            infoLog("[ServeTorr] Removed torrent $key ($freed bytes of disk cache)")
+        }
+    }
+
+    suspend fun clearCache(): CacheClearResult {
+        val result = EngineRuntime.mutex.withLock {
+            check(EngineRuntime.pendingStart?.isActive != true) { "The engine is still starting. Try again in a moment." }
+            check(EngineRuntime.installMutex.tryLock()) { "The engine is being downloaded. Try again when it's done." }
+            try {
+                clearCacheLocked()
+            } finally {
+                EngineRuntime.installMutex.unlock()
+            }
+        }
+        settle()
+        return result
+    }
+
+    private suspend fun clearCacheLocked(): CacheClearResult {
+        val layout = layout
+        val port = livePort()
+        val holdsData = port != null || EngineRuntime.flags.startedPort != null
+        val before = withIOContext { TorrentInventory.sizeOf(layout.filesRoot) + TorrentInventory.sizeOf(layout.cacheRoot) }
+        val hashes = withIOContext { TorrentInventory.diskCache(layout.diskCacheDir).keys.toMutableSet() }
+
+        if (port != null) {
+            try {
+                api.list(port).mapNotNullTo(hashes) { TorrentInventory.normalizeHash(it.hash) }
+                api.wipe(port)
+                api.viewedHashes(port).forEach { api.removeViewed(port, it) }
+            } finally {
+                EngineRuntime.dropGeneration.update { it + 1 }
+            }
+        }
+
+        withIOContext {
+            TorrentInventory.staleFiles(layout, holdsData).forEach { file ->
+                infoLog("[ServeTorr] Clearing ${file.absolutePath} (${TorrentInventory.sizeOf(file)} bytes)")
+                file.deleteTree()
+            }
+        }
+        if (port != null) applyPersistedSettings(port)
+
+        val after = withIOContext { TorrentInventory.sizeOf(layout.filesRoot) + TorrentInventory.sizeOf(layout.cacheRoot) }
+        val result = CacheClearResult(torrentsRemoved = hashes.size, bytesFreed = (before - after).coerceAtLeast(0L))
+        infoLog("[ServeTorr] Cleared the cache: ${result.torrentsRemoved} torrents, ${result.bytesFreed} bytes")
+        return result
+    }
+
+    suspend fun purge() {
+        try {
+            stop()
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            warnLog("[ServeTorr] Could not stop the engine before removing it: ${e.message}")
+        }
+        EngineRuntime.installMutex.withLock {
+            withIOContext {
+                val layout = layout
+                listOf(layout.filesRoot, layout.cacheRoot).forEach { dir ->
+                    if (dir.exists()) infoLog("[ServeTorr] Deleting ${dir.absolutePath} (${TorrentInventory.sizeOf(dir)} bytes)")
+                    dir.deleteTree()
+                }
+                EngineRuntime.verifiedEngine = null
+            }
+            settle()
+        }
+    }
+
     suspend fun stop() {
         EngineRuntime.mutex.withLock {
             check(EngineRuntime.pendingStart?.isActive != true) { "The engine is still starting. Try again in a moment." }
@@ -209,6 +379,7 @@ internal class TorrentEngine(
             EngineRuntime.port = null
             flags.startedPort = null
             EngineRuntime.dropGeneration.update { it + 1 }
+            System.clearProperty(IDLE_WATCHER_PROPERTY)
             infoLog("[ServeTorr] Engine stopped")
         }
         settle()
@@ -294,13 +465,16 @@ internal class TorrentEngine(
                 EngineRuntime.state.value = EngineState.Installing(0, 0)
                 withIOContext {
                     engineDir.mkdirs()
-                    installer.install(abi, libraryFile) { downloaded, total ->
+                    installer.install(abi, engineDir) { downloaded, total ->
                         EngineRuntime.state.value = EngineState.Installing(downloaded, total)
                     }
-                    EngineRuntime.verifiedLibrary = libraryFile.absolutePath
+                    EngineRuntime.verifiedEngine = engineDir.absolutePath
                     rootDir.listFiles()
                         ?.filter { it.name != EngineSource.VERSION }
-                        ?.forEach { it.deleteTree() }
+                        ?.forEach {
+                            infoLog("[ServeTorr] Deleting old engine files ${it.absolutePath} (${TorrentInventory.sizeOf(it)} bytes)")
+                            it.deleteTree()
+                        }
                 }
                 settle()
             } catch (e: Throwable) {
@@ -321,39 +495,67 @@ internal class TorrentEngine(
         stop()
         EngineRuntime.installMutex.withLock {
             withIOContext {
+                infoLog("[ServeTorr] Removing the engine: ${TorrentInventory.describeEngineFiles(layout)}")
                 rootDir.deleteTree()
                 dataDir.deleteTree()
                 diskCacheDir.deleteTree()
-                EngineRuntime.verifiedLibrary = null
+                EngineRuntime.verifiedEngine = null
             }
             settle()
         }
     }
 
     private fun settle() {
+        if (!hasEngineFiles) reportMissingEngineFiles()
         EngineRuntime.state.value = EngineStartPolicy.settledState(
             flags = EngineRuntime.flags,
             version = EngineSource.VERSION,
             port = EngineRuntime.port,
             bindingsAvailable = EngineRuntime.bindingsAvailable,
-            installed = libraryFile.isFile,
+            installed = hasEngineFiles,
         )
     }
 
-    private suspend fun isInstalled(): Boolean = withIOContext {
-        val file = libraryFile
-        if (!file.isFile || file.length() == 0L) return@withIOContext false
-        if (EngineRuntime.verifiedLibrary == file.absolutePath) return@withIOContext true
+    private fun reportMissingEngineFiles() {
+        val layout = layout
+        val verified = EngineRuntime.verifiedEngine
+        if (!layout.engineRoot.exists() && verified == null) return
+        val key = runCatching { TorrentInventory.describeEngineFiles(layout) }.getOrElse { "unreadable: $it" }
+        if (key == EngineRuntime.lastMissingReport) return
+        EngineRuntime.lastMissingReport = key
+        warnLog("[ServeTorr] Engine ${EngineSource.VERSION} files incomplete (verified=${verified != null}): $key")
+    }
 
-        val abi = EngineSource.selectAbi(EngineRuntime.processAbis())
-        val expected = abi?.let { EngineSource.LIBRARY_SHA256[it] }
-        if (expected != null && file.sha256() == expected) {
-            EngineRuntime.verifiedLibrary = file.absolutePath
-            true
-        } else {
-            warnLog("[ServeTorr] Installed engine is corrupted; removing it")
+    private suspend fun isInstalled(): Boolean = withIOContext {
+        val dir = engineDir
+        if (EngineRuntime.verifiedEngine == dir.absolutePath && hasEngineFiles) return@withIOContext true
+        EngineRuntime.verifiedEngine = null
+
+        val abi = EngineSource.selectAbi(EngineRuntime.processAbis()) ?: return@withIOContext false
+        val files = EngineSource.engineFiles(abi) ?: return@withIOContext false
+        val present = files.map { File(dir, it.fileName) to it.sha256 }.filter { (file, _) -> file.isFile }
+        if (present.isEmpty()) return@withIOContext false
+        files.map { File(dir, it.fileName) }.filterNot { it.isFile }.forEach { file ->
+            warnLog("[ServeTorr] Engine file ${file.name} is missing at ${file.absolutePath}; ${TorrentInventory.describeEngineFiles(layout)}")
+        }
+
+        val corrupted = present.mapNotNull { (file, sha256) ->
+            val size = file.length()
+            val actual = if (size == 0L) "empty" else file.sha256()
+            if (actual == sha256) null else Triple(file, sha256, actual to size)
+        }
+        corrupted.forEach { (file, expected, actual) ->
+            warnLog(
+                "[ServeTorr] Engine file ${file.name} failed verification at ${file.absolutePath} " +
+                    "(${actual.second} bytes, sha256 ${actual.first}, expected $expected); removing it"
+            )
             file.setWritable(true)
             file.delete()
+        }
+        if (corrupted.isEmpty() && present.size == files.size) {
+            EngineRuntime.verifiedEngine = dir.absolutePath
+            true
+        } else {
             false
         }
     }
@@ -367,5 +569,7 @@ internal class TorrentEngine(
         const val REUSE_ECHO_MILLIS = 3_000L
         const val METADATA_TIMEOUT_MILLIS = 20_000L
         const val SETTINGS_TIMEOUT_MILLIS = 20_000L
+        const val IDLE_POLL_MILLIS = 30_000L
+        const val IDLE_WATCHER_PROPERTY = "abrogani.servetorr.engine.idleWatcher"
     }
 }

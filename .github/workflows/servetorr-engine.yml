@@ -1,0 +1,170 @@
+name: ServeTorr engine
+
+on:
+  push:
+    tags:
+      - 'servetorr-engine-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Engine version (EngineSource.VERSION), released as servetorr-engine-<version>'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: servetorr-engine-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GO_VERSION: '1.27.4'
+      JAVA_VERSION: '25.0.2'
+      NDK_VERSION: '28.2.13676358'
+      BUILD_TOOLS: '36.1.0'
+      PLATFORM: 'android-36'
+      ENGINE_DIR: providers/ServeTorr/engine
+      ENGINE_SOURCE: providers/ServeTorr/src/main/kotlin/com/abrogani/servetorr/engine/EngineSource.kt
+      ABIS: 'arm64-v8a armeabi-v7a x86 x86_64'
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            version="$INPUT_VERSION"
+          else
+            version="${REF_NAME#servetorr-engine-}"
+          fi
+          if ! [[ "$version" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::engine version must be a positive integer, got '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=servetorr-engine-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v5.0.0
+
+      - name: Check tag target
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          target=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
+          [ -n "$target" ] || target=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          head=$(git rev-parse HEAD)
+          if [ -n "$target" ] && [ "$target" != "$head" ]; then
+            echo "::error::$TAG points at $target but this run checked out $head. Run the workflow from the tag."
+            exit 1
+          fi
+
+      - name: Check version constants
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          fail=0
+          grep -qx "TAG=$VERSION" "$ENGINE_DIR/build.sh" || { echo "::error file=$ENGINE_DIR/build.sh::TAG is not $VERSION"; fail=1; }
+          grep -qx "const tag = \"$VERSION\"" "$ENGINE_DIR/bindings/torrserver.go" || { echo "::error file=$ENGINE_DIR/bindings/torrserver.go::const tag is not \"$VERSION\""; fail=1; }
+          grep -qx "    const val VERSION = \"$VERSION\"" "$ENGINE_SOURCE" || { echo "::error file=$ENGINE_SOURCE::VERSION is not \"$VERSION\""; fail=1; }
+          exit $fail
+
+      - name: Setup Go
+        uses: actions/setup-go@v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5.0.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4.0.4
+
+      - name: Install NDK and build tools
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "ndk;$NDK_VERSION" "build-tools;$BUILD_TOOLS" "platforms;$PLATFORM" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build engine
+        run: |
+          go version
+          javac -version
+          "$ENGINE_DIR/build.sh" "$RUNNER_TEMP/engine-out" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Verify pinned hashes
+        run: |
+          out="$RUNNER_TEMP/engine-out"
+          expected="$RUNNER_TEMP/expected.txt"
+          actual="$RUNNER_TEMP/actual.txt"
+          aar="$RUNNER_TEMP/aar"
+          : > "$expected"
+          for abi in $ABIS; do
+            hash=$(sed -n "s/^ *\"$abi\" to \"\([0-9a-f]\{64\}\)\",\$/\1/p" "$ENGINE_SOURCE")
+            echo "${hash:-missing}  jni/$abi/libgojni.so" >> "$expected"
+          done
+          hash=$(sed -n 's/^ *const val DEX_SHA256 = "\([0-9a-f]\{64\}\)"$/\1/p' "$ENGINE_SOURCE")
+          echo "${hash:-missing}  classes.dex" >> "$expected"
+          rm -rf "$aar" && mkdir -p "$aar"
+          unzip -q "$out/torrserver.aar" -d "$aar"
+          (cd "$aar" && for abi in $ABIS; do sha256sum "jni/$abi/libgojni.so"; done; sha256sum classes.dex) > "$actual"
+          diff -u "$out/sha256.txt" "$actual" > /dev/null || { echo "::error::build.sh sha256.txt does not match the aar contents"; exit 1; }
+          if ! diff -u "$expected" "$actual"; then
+            {
+              echo "### Pinned hashes do not match this build"
+              echo
+              echo "Copy these into EngineSource.kt, commit, move the tag and run again:"
+              echo
+              echo '```kotlin'
+              echo "    const val DEX_SHA256 = \"$(awk '$2 == "classes.dex" { print $1 }' "$actual")\""
+              echo
+              echo "    val LIBRARY_SHA256 = linkedMapOf("
+              for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+                echo "        \"$abi\" to \"$(awk -v f="jni/$abi/libgojni.so" '$2 == f { print $1 }' "$actual")\","
+              done
+              echo "    )"
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::pinned hashes in EngineSource.kt do not match the built engine"
+            exit 1
+          fi
+          echo "pinned hashes match"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          out="$RUNNER_TEMP/engine-out"
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "ServeTorr engine $VERSION, a gomobile build of YouROK/TorrServer (GPL-3.0)."
+            echo
+            echo '```'
+            grep -E '^(go|gomobile|upstream|javac|d8|version): ' "$RUNNER_TEMP/build.log"
+            echo
+            cat "$out/sha256.txt"
+            (cd "$out" && sha256sum torrserver.aar)
+            echo '```'
+          } > "$notes"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$out/torrserver.aar" --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$out/torrserver.aar" --target "$GITHUB_SHA" \
+              --title "ServeTorr engine $VERSION" --notes-file "$notes" --latest=false
+          fi

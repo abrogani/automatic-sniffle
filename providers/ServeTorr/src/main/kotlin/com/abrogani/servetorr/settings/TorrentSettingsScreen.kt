@@ -6,7 +6,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,10 +14,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -36,6 +34,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -59,24 +58,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import com.abrogani.servetorr.engine.EngineSettings
 import com.abrogani.servetorr.engine.EngineState
 import com.abrogani.servetorr.engine.TorrentEngine
+import com.abrogani.servetorr.settings.icons.ServeTorrIcons
 import com.abrogani.servetorr.settings.theme.ServeTorrTheme
+import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import com.flixclusive.provider.extensions.getBoolAsFlow
 import com.flixclusive.provider.extensions.getInt
 import com.flixclusive.provider.extensions.setBool
+import com.flixclusive.provider.extensions.setInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -154,6 +158,8 @@ private fun SettingsContent(
             onPortChange = onPortChange,
         )
 
+        UsageSection(settings = settings)
+
         EngineSettingsSection(engine = engine, running = state is EngineState.Running)
     }
 }
@@ -186,7 +192,7 @@ private fun RestartPrompt(state: EngineState) {
                 }
             }
         },
-        icon = { StatusDot(MaterialTheme.colorScheme.tertiary, size = 14) },
+        icon = { Icon(ServeTorrIcons.RestartAlt, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary) },
     )
 }
 
@@ -197,18 +203,19 @@ private object RestartPromptMemory {
 private data class StatusStyle(
     val label: String,
     val color: Color,
+    val icon: ImageVector,
 )
 
 @Composable
 private fun EngineState.style(): StatusStyle {
     val colors = MaterialTheme.colorScheme
     return when (this) {
-        EngineState.NotInstalled -> StatusStyle("Not installed", colors.outline)
-        is EngineState.Installing -> StatusStyle("Downloading", colors.secondary)
-        EngineState.Stopped -> StatusStyle("Stopped", colors.onSurfaceVariant)
-        is EngineState.Running -> StatusStyle("Running", colors.primary)
-        is EngineState.Failed -> StatusStyle("Error", colors.error)
-        is EngineState.RestartRequired -> StatusStyle("Restart needed", colors.tertiary)
+        EngineState.NotInstalled -> StatusStyle("Not installed", colors.outline, ServeTorrIcons.Download)
+        is EngineState.Installing -> StatusStyle("Downloading", colors.secondary, ServeTorrIcons.Download)
+        EngineState.Stopped -> StatusStyle("Stopped", colors.onSurfaceVariant, ServeTorrIcons.Stop)
+        is EngineState.Running -> StatusStyle("Running", colors.primary, ServeTorrIcons.PlayArrow)
+        is EngineState.Failed -> StatusStyle("Error", colors.error, ServeTorrIcons.Warning)
+        is EngineState.RestartRequired -> StatusStyle("Restart needed", colors.tertiary, ServeTorrIcons.RestartAlt)
     }
 }
 
@@ -246,6 +253,16 @@ private fun EngineCard(
     }
 
     val running = state is EngineState.Running
+    var torrentsOpen by rememberSaveable { mutableStateOf(false) }
+
+    if (torrentsOpen && installed) {
+        TorrentsSheet(
+            engine = engine,
+            running = running,
+            backgroundScope = backgroundScope,
+            onDismiss = { torrentsOpen = false },
+        )
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -260,11 +277,12 @@ private fun EngineCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ServeTorrLogo(size = 52.dp)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "ServeTorr engine",
+                        text = "ServeTorr",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -309,7 +327,8 @@ private fun EngineCard(
                     Button(
                         onClick = { run { engine.stop(); "Engine stopped. It starts again when you play a torrent link." } },
                         enabled = !busy && running,
-                    ) { Text("Stop engine") }
+                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                    ) { ButtonLabel(ServeTorrIcons.Stop, "Stop engine") }
                     FilledTonalButton(
                         onClick = {
                             run {
@@ -321,7 +340,12 @@ private fun EngineCard(
                             }
                         },
                         enabled = !busy && running,
-                    ) { Text("Stop all torrents") }
+                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                    ) { ButtonLabel(ServeTorrIcons.StopCircle, "Stop all torrents") }
+                    OutlinedButton(
+                        onClick = { torrentsOpen = true },
+                        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                    ) { ButtonLabel(ServeTorrIcons.ViewList, "Torrents") }
                 }
                 HorizontalDivider(color = colors.outlineVariant)
                 Row(
@@ -338,14 +362,16 @@ private fun EngineCard(
                         onClick = { run { engine.remove(); "Engine removed." } },
                         enabled = !busy,
                         colors = ButtonDefaults.textButtonColors(contentColor = colors.error),
-                    ) { Text("Remove engine") }
+                        contentPadding = ButtonDefaults.TextButtonWithIconContentPadding,
+                    ) { ButtonLabel(ServeTorrIcons.Delete, "Remove engine") }
                 }
             } else {
                 Button(
                     onClick = { backgroundScope.launch { engine.install() } },
                     enabled = state !is EngineState.Installing,
+                    contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Download engine") }
+                ) { ButtonLabel(ServeTorrIcons.Download, "Download engine") }
             }
 
             if (message.isNotEmpty()) {
@@ -360,16 +386,45 @@ private fun EngineCard(
 }
 
 @Composable
+private fun ServeTorrLogo(size: Dp) {
+    val colors = MaterialTheme.colorScheme
+    var loaded by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(percent = 22))
+            .background(colors.primaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!loaded) {
+            Icon(
+                imageVector = ServeTorrIcons.SwapVert,
+                contentDescription = null,
+                tint = colors.onPrimaryContainer.copy(alpha = 0.6f),
+                modifier = Modifier.size(size / 2),
+            )
+        }
+        AsyncImage(
+            model = ICON_URL,
+            contentDescription = "ServeTorr",
+            contentScale = ContentScale.Crop,
+            onState = { loaded = it is AsyncImagePainter.State.Success },
+            modifier = Modifier.size(size),
+        )
+    }
+}
+
+@Composable
 private fun StatusPill(status: StatusStyle) {
     Row(
         modifier = Modifier
             .clip(CircleShape)
             .background(status.color.copy(alpha = 0.16f))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        StatusDot(status.color, size = 8)
+        Icon(status.icon, contentDescription = null, tint = status.color, modifier = Modifier.size(16.dp))
         Text(
             text = status.label,
             style = MaterialTheme.typography.labelLarge,
@@ -379,46 +434,33 @@ private fun StatusPill(status: StatusStyle) {
 }
 
 @Composable
-private fun StatusDot(
-    color: Color,
-    size: Int,
-) {
-    Box(
-        modifier = Modifier
-            .size(size.dp)
-            .clip(CircleShape)
-            .background(color),
-    )
-}
-
-@Composable
 private fun NetworkCallout() {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        color = colors.tertiary.copy(alpha = 0.08f).compositeOver(colors.surfaceContainerLow),
+        color = colors.secondary.copy(alpha = 0.08f).compositeOver(colors.surfaceContainerLow),
         contentColor = colors.onSurface,
     ) {
-        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .background(colors.tertiary),
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = ServeTorrIcons.Shield,
+                contentDescription = null,
+                tint = colors.secondary,
+                modifier = Modifier.size(20.dp),
             )
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = "Local server",
                     style = MaterialTheme.typography.titleSmall,
-                    color = colors.tertiary,
+                    color = colors.secondary,
                 )
                 Text(
-                    text = "The engine runs a small server that only this device can reach. It starts when you play a " +
-                        "torrent link and keeps sharing with peers while it runs. Stop it here when you're done.",
+                    text = "The engine runs a small server only this device can reach. It starts when you play a " +
+                        "torrent link and stops on its own after a few idle minutes.",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant,
                 )
@@ -444,6 +486,7 @@ private fun LinksSection(
 
     SectionCard(
         title = "Links",
+        icon = ServeTorrIcons.Link,
         description = "How ServeTorr picks up torrent links from your other providers.",
     ) {
         SwitchRow(
@@ -489,6 +532,59 @@ private fun LinksSection(
 }
 
 @Composable
+private fun UsageSection(settings: DataStore<Preferences>) {
+    val scope = rememberCoroutineScope()
+    val wifiOnly by remember(settings) {
+        settings.getBoolAsFlow(WIFI_ONLY_KEY, DEFAULT_WIFI_ONLY)
+    }.collectAsState(initial = DEFAULT_WIFI_ONLY)
+    var idleText by remember { mutableStateOf("") }
+
+    LaunchedEffect(settings) {
+        idleText = settings.getInt(IDLE_STOP_MINUTES_KEY, DEFAULT_IDLE_STOP_MINUTES).toString()
+    }
+
+    SectionCard(
+        title = "Data and battery",
+        icon = ServeTorrIcons.Power,
+        description = "When the engine is allowed to run.",
+    ) {
+        SwitchRow(
+            title = "Wi-Fi only",
+            summary = "Don't start the engine on mobile data. Stops it if Wi-Fi drops.",
+            checked = wifiOnly,
+            icon = ServeTorrIcons.Wifi,
+            onCheckedChange = { scope.launch { settings.setBool(WIFI_ONLY_KEY, it) } },
+        )
+
+        val idleValid = idleText.toIntOrNull()?.let { it in IDLE_STOP_RANGE } == true
+        OutlinedTextField(
+            value = idleText,
+            onValueChange = { input ->
+                idleText = input.filter(Char::isDigit).take(3)
+                idleText.toIntOrNull()
+                    ?.takeIf { it in IDLE_STOP_RANGE }
+                    ?.let { minutes -> scope.launch { settings.setInt(IDLE_STOP_MINUTES_KEY, minutes) } }
+            },
+            label = { Text("Stop when idle (minutes)") },
+            leadingIcon = { Icon(ServeTorrIcons.Timer, contentDescription = null) },
+            supportingText = {
+                Text(
+                    if (idleValid) {
+                        "Stops the engine after this many minutes with nothing playing. 0 keeps it running."
+                    } else {
+                        "Use 0 to ${IDLE_STOP_RANGE.last} minutes."
+                    },
+                )
+            },
+            isError = !idleValid,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
 private fun EngineSettingsSection(
     engine: TorrentEngine,
     running: Boolean,
@@ -510,6 +606,7 @@ private fun EngineSettingsSection(
 
     SectionHeader(
         title = "Engine settings",
+        icon = ServeTorrIcons.Settings,
         description = if (running) {
             "Applying settings restarts every active torrent, so anything playing from a torrent is interrupted."
         } else {
@@ -550,6 +647,7 @@ private fun EngineSettingsSection(
 
     SectionCard(
         title = "Cache",
+        icon = ServeTorrIcons.Storage,
         description = "How much of each torrent is buffered, and where.",
     ) {
         NumberField("Cache size per torrent (MB)", current.cacheSizeMb, "32 to 2048. Kept in memory unless stored on disk.") {
@@ -581,6 +679,7 @@ private fun EngineSettingsSection(
 
     SectionCard(
         title = "Speed",
+        icon = ServeTorrIcons.Speed,
         description = "Limit how much bandwidth torrents use.",
     ) {
         NumberField("Download limit (KiB/s)", current.downloadRateLimitKib, "0 = unlimited.") {
@@ -596,6 +695,7 @@ private fun EngineSettingsSection(
 
     SectionCard(
         title = "Trackers",
+        icon = ServeTorrIcons.SwapVert,
         description = "Trackers help find peers faster.",
     ) {
         Column(modifier = Modifier.selectableGroup()) {
@@ -627,6 +727,11 @@ private fun EngineSettingsSection(
             onValueChange = { trackersText = it },
             label = { Text("Extra trackers") },
             supportingText = { Text("One announce URL per line. Used when adding or replacing trackers.") },
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.5.sp,
+                lineHeight = 19.sp,
+            ),
             modifier = Modifier.fillMaxWidth(),
             minLines = 3,
         )
@@ -698,8 +803,9 @@ private fun EngineSettingsSection(
                 }
             },
             enabled = !busy,
+            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
             modifier = Modifier.weight(1f),
-        ) { Text("Reset to defaults") }
+        ) { ButtonLabel(ServeTorrIcons.RestartAlt, "Reset to defaults") }
         Button(
             onClick = {
                 runAction(if (running) "Applied" else "Saved") {
@@ -708,25 +814,33 @@ private fun EngineSettingsSection(
                 }
             },
             enabled = !busy && errors.isEmpty() && edited != saved,
+            contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
             modifier = Modifier.weight(1f),
-        ) { Text(if (running) "Apply" else "Save") }
+        ) { ButtonLabel(ServeTorrIcons.Check, if (running) "Apply" else "Save") }
     }
 }
 
 @Composable
 private fun SectionHeader(
     title: String,
+    icon: ImageVector,
     description: String?,
 ) {
     Column(
         modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
         description?.let {
             Text(
                 text = it,
@@ -740,6 +854,7 @@ private fun SectionHeader(
 @Composable
 private fun SectionCard(
     title: String,
+    icon: ImageVector,
     description: String?,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -754,11 +869,7 @@ private fun SectionCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                SectionTitle(title = title, icon = icon)
                 description?.let {
                     Text(
                         text = it,
@@ -795,19 +906,17 @@ private fun AdvancedCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Advanced",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    SectionTitle(title = "Advanced", icon = ServeTorrIcons.Tune)
                     Text(
                         text = "Connections, network protocols and debug logging. The defaults suit most people.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Chevron(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Icon(
+                    imageVector = ServeTorrIcons.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.rotate(rotation),
                 )
             }
@@ -827,20 +936,31 @@ private fun AdvancedCard(
 }
 
 @Composable
-private fun Chevron(
-    color: Color,
-    modifier: Modifier = Modifier,
+private fun SectionTitle(
+    title: String,
+    icon: ImageVector,
 ) {
-    Canvas(modifier = modifier.size(24.dp)) {
-        val w = size.width
-        val h = size.height
-        val path = Path().apply {
-            moveTo(w * 0.28f, h * 0.40f)
-            lineTo(w * 0.5f, h * 0.62f)
-            lineTo(w * 0.72f, h * 0.40f)
-        }
-        drawPath(path, color, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
+}
+
+@Composable
+internal fun ButtonLabel(
+    icon: ImageVector,
+    text: String,
+) {
+    Icon(icon, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+    Text(text)
 }
 
 @Composable
@@ -875,6 +995,7 @@ private fun SwitchRow(
     checked: Boolean,
     enabled: Boolean = true,
     summaryIsError: Boolean = false,
+    icon: ImageVector? = null,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -887,6 +1008,13 @@ private fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        icon?.let {
+            Icon(
+                imageVector = it,
+                contentDescription = null,
+                tint = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.5f),
+            )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title,
@@ -934,3 +1062,4 @@ private val RETRACKER_MODES = listOf(
 
 private const val STATUS_REFRESH_MILLIS = 1_000L
 private const val MAX_NUMBER_DIGITS = 6
+private val IDLE_STOP_RANGE = 0..240

@@ -8,13 +8,14 @@ import dalvik.system.DexClassLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import java.io.File
-import java.io.InputStream
 import java.lang.reflect.InvocationTargetException
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 internal object EngineRuntime {
     private const val BINDINGS_PROPERTY = "abrogani.servetorr.engine.bindings"
@@ -36,7 +37,14 @@ internal object EngineRuntime {
     var port: Int? = null
 
     @Volatile
-    var verifiedLibrary: String? = null
+    var verifiedEngine: String? = null
+
+    val activeResolutions = AtomicInteger()
+
+    var idleWatcher: Job? = null
+
+    @Volatile
+    var lastMissingReport: String? = null
 
     val dropGeneration = MutableStateFlow(0)
 
@@ -54,8 +62,8 @@ internal object EngineRuntime {
             abis32 = Build.SUPPORTED_32_BIT_ABIS.toList(),
         )
 
-    fun start(context: Context, engineDir: File, dataDir: File, bindingsDex: () -> InputStream): Long {
-        val server = bindings ?: load(context, engineDir, bindingsDex)
+    fun start(context: Context, engineDir: File, dataDir: File): Long {
+        val server = bindings ?: load(context, engineDir)
 
         return try {
             invoke {
@@ -83,8 +91,10 @@ internal object EngineRuntime {
         return true
     }
 
-    private fun load(context: Context, engineDir: File, bindingsDex: () -> InputStream): Class<*> {
-        val dex = prepareBindings(engineDir, bindingsDex)
+    private fun load(context: Context, engineDir: File): Class<*> {
+        val dex = File(engineDir, EngineSource.DEX_NAME)
+        check(dex.isFile) { "The engine bindings are missing. Download the engine again." }
+        dex.setReadOnly()
         val loader = DexClassLoader(
             dex.absolutePath,
             null,
@@ -101,31 +111,6 @@ internal object EngineRuntime {
             server = it
             System.getProperties()[BINDINGS_PROPERTY] = it
             infoLog("[ServeTorr] Loaded engine ${EngineSource.VERSION}")
-        }
-    }
-
-    private fun prepareBindings(engineDir: File, bindingsDex: () -> InputStream): File {
-        val dex = File(engineDir, "bindings.dex")
-        if (dex.isFile && dex.sha256() == EngineSource.BINDINGS_DEX_SHA256) {
-            dex.setReadOnly()
-            return dex
-        }
-
-        val temp = File(engineDir, "bindings.dex.tmp").also { it.setWritable(true); it.delete() }
-        try {
-            bindingsDex().use { input -> temp.outputStream().use { input.copyTo(it) } }
-
-            val actual = temp.sha256()
-            check(actual == EngineSource.BINDINGS_DEX_SHA256) { "Bundled engine bindings are corrupted ($actual)" }
-
-            dex.setWritable(true)
-            dex.delete()
-            check(temp.renameTo(dex)) { "Could not store the engine bindings" }
-            dex.setReadOnly()
-            return dex
-        } catch (e: Throwable) {
-            temp.delete()
-            throw e
         }
     }
 

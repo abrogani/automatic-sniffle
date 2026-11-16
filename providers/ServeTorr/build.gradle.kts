@@ -28,6 +28,12 @@ flxProvider {
         - New look for the settings, with a green theme and the less common options under "Advanced".
         - Asks you to restart the app when an engine update needs it.
         - Local peer discovery setting (off by default).
+        - Wi-Fi only: the engine won't start on mobile data and stops if Wi-Fi drops.
+        - The engine stops by itself after a few idle minutes (configurable).
+        - New torrents list: see every torrent the engine holds, with peers and speed, and remove them one by one.
+        - "Clear cache" removes every torrent and cached data, including leftovers from older engines.
+        - Old torrent links the app had cached before the engine was installed are cleaned up, so they play now.
+        - Engine files are removed when you uninstall the provider.
 
         # v0.0.2
 
@@ -50,7 +56,7 @@ flxProvider {
     versionPatch = 0
     versionBuild = 0
 
-    requiresResources = true
+    iconUrl = "https://i.imgur.com/8DkFv24.png"
 
     language = Language.Multiple
 

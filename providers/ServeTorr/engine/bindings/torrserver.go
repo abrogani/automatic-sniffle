@@ -22,7 +22,7 @@ import (
 	"server/web/api"
 )
 
-const tag = "st-1"
+const tag = "1"
 
 const loopback = "127.0.0.1"
 
@@ -58,7 +58,7 @@ func StartTorrentServer(pathdb string, requestedPort int) (result int) {
 			if ln != nil {
 				ln.Close()
 			}
-			bts.Disconnect()
+			bts.Stop()
 			if dbOpen {
 				settings.CloseDB()
 			}
@@ -136,7 +136,7 @@ func StopTorrentServer() {
 		srv = nil
 	}
 	settings.InternalPort = ""
-	bts.Disconnect()
+	bts.Stop()
 	settings.CloseDB()
 }
 
