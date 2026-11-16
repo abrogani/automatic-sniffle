@@ -5,7 +5,7 @@
 | :-----------  | :-------  |
 | FlixHQ | 🔴 DOWN |
 | SuperStream | 🟢 OK |
-| LookMovie | 🔵 BETA |
+| LookMovie | 🟢 OK |
 | Stremio | 🟢 OK |
 | StreamPlay | 🟢 OK |
 | ServeTorr | 🔵 BETA |
