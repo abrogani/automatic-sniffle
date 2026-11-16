@@ -30,6 +30,7 @@ import kotlin.time.Duration.Companion.seconds
 
 internal class LinkProxy(
     private val backend: TorrentBackend,
+    private val blockReason: suspend () -> String? = { null },
     private val resolveTimeout: Duration = 30.seconds,
     private val maxConnections: Int = 32,
     private val readTimeoutMillis: Int = 5_000,
@@ -84,7 +85,7 @@ internal class LinkProxy(
                 Running(
                     server = server,
                     scope = scope,
-                    resolver = LinkResolver(backend, scope, resolveTimeout),
+                    resolver = LinkResolver(backend, scope, resolveTimeout, blockReason),
                     permits = Semaphore(maxConnections),
                     sockets = Collections.synchronizedSet(HashSet()),
                 )

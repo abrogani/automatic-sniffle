@@ -22,53 +22,81 @@ internal class EngineInstaller(client: OkHttpClient) {
         .callTimeout(3, TimeUnit.MINUTES)
         .build()
 
-    suspend fun install(abi: String, target: File, onProgress: (Long, Long) -> Unit) = withIOContext {
-        val expected = EngineSource.LIBRARY_SHA256[abi]
-            ?: throw IllegalArgumentException("Unsupported ABI $abi")
-        val entryName = EngineSource.entryName(abi)
-
-        val range = try {
-            locateEntry(entryName)
-        } catch (e: RangeNotSupported) {
-            warnLog("[ServeTorr] Server ignored Range; downloading the whole engine archive")
-            null
+    suspend fun install(abi: String, engineDir: File, onProgress: (Long, Long) -> Unit) = withIOContext {
+        val files = EngineSource.engineFiles(abi) ?: throw IllegalArgumentException("Unsupported ABI $abi")
+        val temps = files.associate { file ->
+            file.entryName to ExtractTarget(
+                file = File(engineDir, "${file.fileName}.tmp").also { it.setWritable(true); it.delete() },
+                sha256 = file.sha256,
+                maxBytes = file.maxBytes,
+            )
         }
 
-        val request = Request.Builder().url(EngineSource.AAR_URL).apply {
-            if (range != null) header("Range", "bytes=${range.start}-${range.endExclusive - 1}")
-        }.build()
-
-        val temp = File(target.parentFile, "${target.name}.tmp").also { it.setWritable(true); it.delete() }
         try {
-            downloadClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Engine download failed [${response.code}]")
-
-                val total = when {
-                    range != null && response.code == 206 -> range.length
-                    else -> response.body.contentLength()
-                }
-                if (total > EngineSource.MAX_ARCHIVE_BYTES) throw SecurityException("Engine archive is larger than expected")
-
-                val job = coroutineContext[Job]
-                val counting = CountingInputStream(response.body.byteStream(), EngineSource.MAX_ARCHIVE_BYTES) {
-                    job?.ensureActive()
-                    onProgress(it, total)
-                }
-                extractEntry(counting, entryName, temp, expected)
+            val ranges = try {
+                locateEntries(files.map { it.entryName })
+            } catch (e: RangeNotSupported) {
+                warnLog("[ServeTorr] Server ignored Range; downloading the whole engine archive")
+                null
             }
 
-            target.setWritable(true)
-            target.delete()
-            check(temp.renameTo(target)) { "Could not store the torrent engine" }
-            target.setReadOnly()
+            if (ranges == null) {
+                download(null, temps, 0L, null, onProgress)
+            } else {
+                val total = ranges.values.sumOf { it.length }
+                var done = 0L
+                for (file in files) {
+                    val range = ranges.getValue(file.entryName)
+                    download(range, mapOf(file.entryName to temps.getValue(file.entryName)), done, total, onProgress)
+                    done += range.length
+                }
+            }
+
+            for (file in files) {
+                val temp = temps.getValue(file.entryName).file
+                val target = File(engineDir, file.fileName)
+                target.setWritable(true)
+                target.delete()
+                check(temp.renameTo(target)) { "Could not store the torrent engine" }
+                target.setReadOnly()
+            }
             infoLog("[ServeTorr] Installed engine ${EngineSource.VERSION} ($abi)")
         } catch (e: Throwable) {
-            temp.delete()
+            temps.values.forEach { it.file.delete() }
             throw e
         }
     }
 
-    private suspend fun locateEntry(name: String): ZipDirectory.EntryRange {
+    private suspend fun download(
+        range: ZipDirectory.EntryRange?,
+        targets: Map<String, ExtractTarget>,
+        offset: Long,
+        knownTotal: Long?,
+        onProgress: (Long, Long) -> Unit,
+    ) {
+        val request = Request.Builder().url(EngineSource.AAR_URL).apply {
+            if (range != null) header("Range", "bytes=${range.start}-${range.endExclusive - 1}")
+        }.build()
+
+        downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("Engine download failed [${response.code}]")
+
+            val total = when {
+                knownTotal != null && response.code == 206 -> knownTotal
+                else -> offset + response.body.contentLength()
+            }
+            if (total > EngineSource.MAX_ARCHIVE_BYTES) throw SecurityException("Engine archive is larger than expected")
+
+            val job = currentCoroutineContext()[Job]
+            val counting = CountingInputStream(response.body.byteStream(), EngineSource.MAX_ARCHIVE_BYTES) {
+                job?.ensureActive()
+                onProgress(offset + it, total)
+            }
+            extractEntries(counting, targets)
+        }
+    }
+
+    private suspend fun locateEntries(names: List<String>): Map<String, ZipDirectory.EntryRange> {
         val tailRequest = Request.Builder()
             .url(EngineSource.AAR_URL)
             .header("Range", "bytes=-${ZipDirectory.TAIL_SIZE}")
@@ -91,8 +119,9 @@ internal class EngineInstaller(client: OkHttpClient) {
         }
 
         val entries = ZipDirectory.readCentralDirectory(central, end.entryCount)
-        return ZipDirectory.locate(entries, end, name)
-            ?: throw IOException("$name is missing from the engine archive")
+        return names.associateWith { name ->
+            ZipDirectory.locate(entries, end, name) ?: throw IOException("$name is missing from the engine archive")
+        }
     }
 
     private fun fetchRange(start: Long, endExclusive: Long): ByteArray {
@@ -110,6 +139,8 @@ internal class EngineInstaller(client: OkHttpClient) {
     }
 
     private class RangeNotSupported : IOException()
+
+    internal data class ExtractTarget(val file: File, val sha256: String, val maxBytes: Long)
 
     internal class CountingInputStream(
         input: InputStream,
@@ -149,33 +180,40 @@ internal class EngineInstaller(client: OkHttpClient) {
         private fun Response.archiveSize(): Long? =
             header("Content-Range")?.let { CONTENT_RANGE_TOTAL.find(it) }?.groupValues?.get(1)?.toLongOrNull()
 
-        fun extractEntry(input: InputStream, entryName: String, target: File, expectedSha256: String) {
-            val digest = MessageDigest.getInstance("SHA-256")
+        fun extractEntry(input: InputStream, entryName: String, target: File, expectedSha256: String) =
+            extractEntries(input, mapOf(entryName to ExtractTarget(target, expectedSha256, EngineSource.MAX_LIBRARY_BYTES)))
+
+        fun extractEntries(input: InputStream, targets: Map<String, ExtractTarget>) {
+            val remaining = targets.toMutableMap()
             ZipInputStream(input).use { zip ->
+                while (remaining.isNotEmpty()) {
+                    val entry = zip.nextEntry
+                        ?: throw IOException("${remaining.keys.first()} is missing from the engine archive")
+                    val target = remaining.remove(entry.name) ?: continue
+                    writeVerified(zip, entry.name, target)
+                }
+            }
+        }
+
+        private fun writeVerified(input: InputStream, entryName: String, target: ExtractTarget) {
+            val digest = MessageDigest.getInstance("SHA-256")
+            target.file.outputStream().use { out ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var total = 0L
                 while (true) {
-                    val entry = zip.nextEntry ?: throw IOException("$entryName is missing from the engine archive")
-                    if (entry.name != entryName) continue
+                    val read = input.read(buffer)
+                    if (read < 0) break
 
-                    target.outputStream().use { out ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var total = 0L
-                        while (true) {
-                            val read = zip.read(buffer)
-                            if (read < 0) break
-
-                            total += read
-                            if (total > EngineSource.MAX_LIBRARY_BYTES) throw SecurityException("Engine library is larger than expected")
-                            digest.update(buffer, 0, read)
-                            out.write(buffer, 0, read)
-                        }
-                    }
-                    break
+                    total += read
+                    if (total > target.maxBytes) throw SecurityException("$entryName is larger than expected")
+                    digest.update(buffer, 0, read)
+                    out.write(buffer, 0, read)
                 }
             }
 
             val actual = digest.digest().toHex()
-            if (actual != expectedSha256) {
-                throw SecurityException("Engine checksum mismatch (expected $expectedSha256, got $actual)")
+            if (actual != target.sha256) {
+                throw SecurityException("Engine checksum mismatch for $entryName (expected ${target.sha256}, got $actual)")
             }
         }
 

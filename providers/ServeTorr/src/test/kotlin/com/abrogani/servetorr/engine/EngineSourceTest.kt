@@ -31,6 +31,17 @@ class EngineSourceTest {
     }
 
     @Test
+    fun `engine is the ABI's library plus the shared bindings dex`() {
+        val files = EngineSource.engineFiles("x86_64")!!
+
+        expectThat(files.map { it.entryName }).containsExactly("jni/x86_64/libgojni.so", "classes.dex")
+        expectThat(files.map { it.fileName }).containsExactly("libgojni.so", "bindings.dex")
+        expectThat(files.map { it.sha256 })
+            .containsExactly(EngineSource.LIBRARY_SHA256.getValue("x86_64"), EngineSource.DEX_SHA256)
+        expectThat(EngineSource.engineFiles("mips")).isNull()
+    }
+
+    @Test
     fun `status file stats map to torrent files`() {
         val status = TorrServerClient.parseStatus(
             """
@@ -69,9 +80,19 @@ class EngineSourceTest {
     }
 
     @Test
+    fun `release tag and echo follow the engine version`() {
+        expectThat(EngineSource.VERSION.toIntOrNull()).isEqualTo(1)
+        expectThat(EngineSource.AAR_URL)
+            .isEqualTo("https://github.com/abrogani/automatic-sniffle/releases/download/servetorr-engine-1/torrserver.aar")
+        expectThat(TorrServerClient.ECHO_SIGNATURE).isEqualTo("ServeTorr torrserver 1")
+    }
+
+    @Test
     fun `echo must be our build's exact signature`() {
-        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver st-1")).isTrue()
-        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver st-1\n")).isTrue()
+        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver 1")).isTrue()
+        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver 1\n")).isTrue()
+        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver st-1")).isFalse()
+        expectThat(TorrServerClient.isEngineEcho("ServeTorr torrserver 12")).isFalse()
         expectThat(TorrServerClient.isEngineEcho("CloudStream torrserver")).isFalse()
         expectThat(TorrServerClient.isEngineEcho("MatriX.136")).isFalse()
         expectThat(TorrServerClient.isEngineEcho("")).isFalse()

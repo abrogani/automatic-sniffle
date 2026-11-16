@@ -19,6 +19,7 @@ internal class LinkResolver(
     private val backend: TorrentBackend,
     private val scope: CoroutineScope,
     private val timeout: Duration,
+    private val blockReason: suspend () -> String? = { null },
 ) {
     sealed interface Outcome {
         val message: String
@@ -40,6 +41,7 @@ internal class LinkResolver(
     private val inFlight = HashMap<String, Deferred<Metadata>>()
 
     suspend fun resolve(request: ProxyUrl.Request): Outcome {
+        blockReason()?.let { return Outcome.Unavailable(it) }
         val port =
             try {
                 backend.ensureRunning()

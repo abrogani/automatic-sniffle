@@ -127,6 +127,27 @@ internal class TorrServerClient(client: OkHttpClient) {
         postRaw(port, "torrents", gson.toJson(TorrentRequest(action = "drop", hash = hash)))
     }
 
+    suspend fun remove(port: Int, hash: String) {
+        postRaw(port, "torrents", gson.toJson(TorrentRequest(action = "rem", hash = hash)))
+    }
+
+    suspend fun wipe(port: Int) {
+        postRaw(port, "torrents", gson.toJson(TorrentRequest(action = "wipe")))
+    }
+
+    suspend fun viewedHashes(port: Int): List<String> {
+        val body = postRaw(port, "viewed", """{"action":"list"}""") ?: return emptyList()
+        return try {
+            gson.fromJson(body, Array<ViewedEntry>::class.java)?.mapNotNull { it?.hash }?.distinct().orEmpty()
+        } catch (e: JsonParseException) {
+            throw IOException("Unexpected TorrServer response: ${body.take(200)}", e)
+        }
+    }
+
+    suspend fun removeViewed(port: Int, hash: String) {
+        postRaw(port, "viewed", gson.toJson(ViewedRequest(action = "rem", hash = hash, fileIndex = -1)))
+    }
+
     suspend fun getSettings(port: Int): JsonObject {
         val body = postRaw(port, "settings", """{"action":"get"}""")
             ?: throw IOException("TorrServer returned no settings")
@@ -186,6 +207,23 @@ internal class TorrServerClient(client: OkHttpClient) {
         val name: String? = null,
         val title: String? = null,
         @SerializedName("file_stats") val fileStats: List<FileStat?>? = null,
+        val stat: Int? = null,
+        @SerializedName("stat_string") val statString: String? = null,
+        @SerializedName("torrent_size") val torrentSize: Long? = null,
+        @SerializedName("loaded_size") val loadedSize: Long? = null,
+        @SerializedName("total_peers") val totalPeers: Int? = null,
+        @SerializedName("active_peers") val activePeers: Int? = null,
+        @SerializedName("connected_seeders") val connectedSeeders: Int? = null,
+        @SerializedName("download_speed") val downloadSpeed: Double? = null,
+        @SerializedName("upload_speed") val uploadSpeed: Double? = null,
+    )
+
+    internal data class ViewedEntry(val hash: String? = null)
+
+    internal data class ViewedRequest(
+        val action: String,
+        val hash: String,
+        @SerializedName("file_index") val fileIndex: Int,
     )
 
     internal data class FileStat(
@@ -197,7 +235,7 @@ internal class TorrServerClient(client: OkHttpClient) {
     class TorrentMetadataTimeout(message: String) : IOException(message)
 
     internal companion object {
-        const val ECHO_SIGNATURE = "ServeTorr torrserver st-1"
+        const val ECHO_SIGNATURE = "ServeTorr torrserver ${EngineSource.VERSION}"
 
         private const val ECHO_POLL_MILLIS = 250L
         private const val METADATA_POLL_MILLIS = 500L
