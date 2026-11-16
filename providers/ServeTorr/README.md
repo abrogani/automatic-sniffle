@@ -41,52 +41,33 @@ Nothing touches the network while browsing. Torrents are only added when somethi
 | `engine/` | Engine download/verify/load, lifecycle (start, stop, idle auto-stop, restart detection), settings, torrent inventory, uninstall cleanup. |
 | `net/` | OkHttp `Platform` wrapper that allows cleartext to loopback; Wi-Fi-only policy. |
 | `settings/` | Compose settings screen, torrents sheet, theme, icon set. |
-| `engine/` (module root) | Go engine build: bindings, upstream patches, `build.sh`. |
 
 ## Engine
 
-Our own gomobile build of [YouROK/TorrServer](https://github.com/YouROK/TorrServer) (GPL-3.0). The upstream commit is
-pinned in `engine/build.sh`.
+Our own gomobile build of [YouROK/TorrServer](https://github.com/YouROK/TorrServer) (GPL-3.0), built and released from
+its own repo: [abrogani/servetorr-engine](https://github.com/abrogani/servetorr-engine). That repo holds the bindings,
+upstream patches, `build.sh`, the smoke tests that lock in the upstream behaviour this provider relies on, and the
+release and upstream-bump workflows. See its README for what we change and how to build.
 
-**What we change** (`engine/bindings`, `engine/patches`):
+**Versioning.** `EngineSource.VERSION` is a plain integer and must equal the engine repo's `TAG` / `const tag`. Release
+tag `v<VERSION>`, `/echo` answers `ServeTorr torrserver <VERSION>`.
 
-- `bindings/`: the `torrServer` gomobile package. `startTorrentServer(path, port)` returns the real port or `-1` and never
-  exits the process. Also `stopTorrentServer`, `addTrackers`, `waitTorrentServer`. Only the HTTP API is linked: no web
-  UI, Telegram bot, MCP, DLNA or Bonjour.
-- Binds `127.0.0.1` only (upstream's bind option). Requests carrying `Origin` or `Sec-Fetch-Site` get `403`, so web
-  pages can't drive it.
-- `upstream-0001`: DLNA/Bonjour stubs under the `servetorr` build tag.
-- `upstream-0002`: reopen the settings DB after stop, so stop → start works in one process.
-- `upstream-0003`: stop cancels any in-flight `/settings` reconnect loop (epoch counter), and the trackers-list refresh
-  pauses while stopped.
-- `gobind-java-lazy-load.patch`: adds a lazy `go.Seq.load()`. Stock gomobile loads the library in a static initializer,
-  which we can't allow (see Loading).
+**Pins.** `EngineSource.kt` pins `AAR_URL`
+(`https://github.com/abrogani/servetorr-engine/releases/download/v$VERSION/torrserver.aar`), `DEX_SHA256` and
+`LIBRARY_SHA256` per ABI, from the release's `sha256.txt`. Publishing an engine release opens a PR here that updates
+only those values (needs the `PROVIDER_REPO_TOKEN` secret in the engine repo). Without the secret, copy the
+`EngineSource` block from the release job summary. The CI build is the source of truth.
 
-**Versioning.** `VERSION` is a plain integer. These move together:
+**Upstream updates.** The engine repo checks TorrServer's default branch daily and opens a PR that bumps the pin and the
+engine version, re-applies our patches, runs the smoke tests and the build, and reports the result (a draft marked
+`[FAILING]` when a patch or test breaks). Nothing reaches users until that PR is merged, tagged, and the provider PR is
+merged and released.
 
-| Where | Value |
-|---|---|
-| `EngineSource.VERSION` | `1` |
-| `const tag` in `bindings/torrserver.go` | `1` |
-| `TAG` in `build.sh` | `1` |
-| Release tag | `servetorr-engine-1` |
-| `/echo` | `ServeTorr torrserver 1` |
-
-**Building.**
-
-```sh
-ANDROID_HOME=… ANDROID_NDK_HOME=… engine/build.sh [out-dir]
-```
-
-- Requires Go 1.27.4, a JDK (Temurin 25.0.2 in CI), NDK 28.2.13676358 and build-tools 36.1.0. Runs on macOS or Linux.
-- Output is reproducible: the build runs in a fixed `/tmp/servetorr-engine` with `-trimpath` and no build ID.
-- Writes `torrserver.aar` and `sha256.txt`. The AAR contains `jni/<abi>/libgojni.so` (16 KB aligned on 64-bit) and a
-  top-level `classes.dex` (the d8'd bindings).
-
-**Releasing.** Push a `servetorr-engine-<VERSION>` tag, or run the workflow manually.
-`.github/workflows/servetorr-engine.yml` builds, checks the hashes against the pins in `EngineSource.kt`, and publishes
-the release asset. If the hashes differ, the job fails and its summary contains the `EngineSource` block to paste: commit
-it, move the tag, run again. **The CI build is the source of truth**; the current pins come from a macOS build.
+**Engine updates on device.** When the provider ships a new `VERSION`, the new files aren't on disk yet. At startup, if
+the user had the engine (an `engine_wanted` flag set on install and cleared by "Remove engine", or an older version dir
+on disk), the new version is downloaded automatically, waiting for Wi-Fi when Wi-Fi only is on. The old version dir is
+deleted after the new one verifies. If the old `.so` is still loaded in the process, the state becomes
+`RestartRequired` and the settings ask for an app restart.
 
 **Install.** `EngineInstaller` range-requests the AAR's ZIP tail, reads the central directory, and fetches only
 `jni/<abi>/libgojni.so` and `classes.dex` (one range each, roughly 9 MB). If the server ignores `Range`, it streams the
@@ -111,7 +92,7 @@ with a `DexClassLoader` whose library search path is the engine dir. It can't li
 
 **Upstream behaviour the client relies on.**
 
-- File ids are 1-based, in info-dict order. Entries without an id are skipped. Single-file torrents ignore `index`.
+- File ids are 1-based, numbered in natural path order (upstream sorts by path); `/stream` resolves `index` against the same list. Entries without an id are skipped. Single-file torrents ignore `index`.
 - `add` returns immediately; metadata is polled with `get` (20 s timeout).
 - `/stream` re-parses `link` on every request and unescapes it twice. We always address the engine by info-hash magnet
   (a `.torrent` URL would be re-downloaded on every seek) and pre-escape `%` and `+`.
@@ -187,7 +168,8 @@ On-device testing:
 - **Use an Android 13 AVD with the release APK.** Android 14+ refuses a debug `.flx` from shared storage (writable dex).
 - **Grant storage access first.** Run `adb shell appops set com.flixclusive MANAGE_EXTERNAL_STORAGE allow`, or the host
   crashes reading `updater.json`.
-- **Testing an engine build before it's released.** Serve the AAR from your machine (`python3 -m http.server`),
+- **Engine work** happens in the engine repo (`./build.sh`, `./build.sh test` for the smoke tests).
+- **Testing an engine build before it's released.** Build it in the engine repo, serve the AAR (`python3 -m http.server`),
   `adb reverse tcp:<port> tcp:<port>`, and temporarily point `AAR_URL` at `http://127.0.0.1:<port>/torrserver.aar`.
   Loopback cleartext is allowed.
 - **A public-domain magnet for testing (Sintel):**
@@ -198,8 +180,8 @@ On-device testing:
 
 - **Host internals.** Interception, the link cache purge and uninstall detection depend on host internals. A host update
   can break them; the settings screen reports when interception is unavailable.
-- **Hash pins.** The pinned engine hashes come from a macOS build until the release workflow has run once. If the Linux
-  output differs, update the pins from the workflow summary.
+- **Hash pins.** The current pins come from a macOS build. The first CI release's provider PR replaces them if the
+  Linux output differs.
 - **Backup restore.** If a restore takes longer than about 25 s to bring ServeTorr back, the uninstall cleanup deletes
   the engine and it has to be downloaded again.
 - **Unexplained missing engine files.** Engine files were seen disappearing twice on an emulator and couldn't be

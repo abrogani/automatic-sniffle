@@ -83,7 +83,7 @@ class EngineSourceTest {
     fun `release tag and echo follow the engine version`() {
         expectThat(EngineSource.VERSION.toIntOrNull()).isEqualTo(1)
         expectThat(EngineSource.AAR_URL)
-            .isEqualTo("https://github.com/abrogani/automatic-sniffle/releases/download/servetorr-engine-1/torrserver.aar")
+            .isEqualTo("https://github.com/abrogani/servetorr-engine/releases/download/v1/torrserver.aar")
         expectThat(TorrServerClient.ECHO_SIGNATURE).isEqualTo("ServeTorr torrserver 1")
     }
 
