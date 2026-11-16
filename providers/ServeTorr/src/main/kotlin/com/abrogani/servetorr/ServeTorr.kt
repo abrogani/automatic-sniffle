@@ -7,6 +7,7 @@ import com.abrogani.servetorr.engine.EngineState
 import com.abrogani.servetorr.engine.TorrentEngine
 import com.abrogani.servetorr.engine.UninstallCleanup
 import com.abrogani.servetorr.intercept.HostLinkCache
+import com.abrogani.servetorr.intercept.HostCapability
 import com.abrogani.servetorr.intercept.LinkInterceptor
 import com.abrogani.servetorr.link.TorrentLinkRewriter
 import com.abrogani.servetorr.net.LoopbackCleartext
@@ -27,6 +28,7 @@ import com.flixclusive.core.util.log.infoLog
 import com.flixclusive.core.util.log.warnLog
 import com.flixclusive.provider.FlixclusiveProvider
 import com.flixclusive.provider.ProviderPlugin
+import com.flixclusive.provider.capability.MediaLinkProviderApi
 import com.flixclusive.provider.extensions.getBool
 import com.flixclusive.provider.extensions.getBoolAsFlow
 import com.flixclusive.provider.extensions.getInt
@@ -64,7 +66,7 @@ class ServeTorr : ProviderPlugin() {
         LinkInterceptor(
             self = this,
             rewriter = TorrentLinkRewriter(proxyPort = { proxy.port }, engineInstalled = { engine.hasEngineFiles }),
-            isEnabled = { settings.getBool(INTERCEPT_KEY, DEFAULT_INTERCEPT) },
+            isEnabled = { interceptionEnabled() },
         )
     }
 
@@ -115,6 +117,12 @@ class ServeTorr : ProviderPlugin() {
         HostLinkCache.purgeStaleTorrentLinks(application, proxy.port, engine.hasEngineFiles)
     }
 
+    private suspend fun interceptionEnabled(): Boolean =
+        settings.getBool(INTERCEPT_KEY, DEFAULT_INTERCEPT) &&
+            HostCapability.isMediaLinkEnabled(application, this) != false
+
+    override suspend fun getMediaLinkApi(context: Context): MediaLinkProviderApi = PlaceholderLinkApi
+
     private suspend fun updateEngineIfNeeded() {
         if (!engine.updateWanted()) return
         while (network.blockReason() != null) delay(ENGINE_UPDATE_RETRY_MILLIS)
@@ -144,6 +152,7 @@ class ServeTorr : ProviderPlugin() {
             settings = settings,
             engine = engine,
             isInterceptorInstalled = { interceptor.isInstalled },
+            linksCapabilityEnabled = { HostCapability.isMediaLinkEnabled(application, this) },
             proxyPort = { proxy.port },
             onPortChange = ::changeProxyPort,
             backgroundScope = scope,

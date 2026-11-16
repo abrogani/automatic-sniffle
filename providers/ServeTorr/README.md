@@ -114,7 +114,7 @@ Every deletion of engine files is logged with path and size. Missing or failed-v
 
 | Setting | Stored in | Notes |
 |---|---|---|
-| Intercept links | plugin DataStore | Master switch for rewriting. |
+| Intercept links | plugin DataStore | Master switch for rewriting. Also off while ServeTorr's **Links** capability is disabled in the host's provider screen. |
 | Link port | plugin DataStore | Default 47390. Changing it rebinds the proxy live. Links cached on the old port are purged. |
 | Wi-Fi only | plugin DataStore | Proxy answers 503 off Wi-Fi/Ethernet. A running engine stops when the default network leaves Wi-Fi or the setting is turned on while off Wi-Fi. VPNs count as Wi-Fi when their underlying transport is Wi-Fi. |
 | Stop when idle | plugin DataStore | Minutes, 0 to 240, 0 = never. |
@@ -141,6 +141,7 @@ behaviour; none of them throw.
 | Cleartext to loopback | Swap OkHttp's `Platform` (checked per connection) | Host targets SDK 36 with no network security config. Only literal loopback is allowed (`127.x.y.z`, `::1`, `localhost`). |
 | Provider registry | Hilt `SingletonC` → `ProviderRepositoryImpl.pluginsMap` | `GetMediaLinksUseCaseImpl` calls `getMediaLinkApi()` fresh per request, so swapping map entries takes effect immediately. |
 | Link cache | Hilt → `AppDatabase` → `cachedMediaLinkDao()` / `userDao()` | The host replays cached links per (user, media, episode) while any is unexpired, and old raw magnets never expire. Any group holding a raw torrent link (once the engine is installed) or a proxy URL on an old port is deleted whole, after the proxy starts, on install, and on port change. |
+| Links capability | `getMediaLinkApi()` returns `PlaceholderLinkApi` (emits nothing); Hilt → `AppDatabase.installedProviderDao().getAll()` → our row's `isMediaLinkEnabled` for the current user (`UserSessionDataStore.currentUserId`) | Gives the host a Links toggle for ServeTorr and makes it control interception. If the row or user can't be read, interception stays on. |
 | Settings detection | Two wrapper classes, with and without `SettingsScreen` | The host checks `getDeclaredComposableMethod("SettingsScreen")` on the exact class. |
 
 Lifecycle quirks handled:

@@ -150,7 +150,7 @@ internal object HostLinkCache {
     private fun isLinkDatabase(candidate: Any): Boolean =
         noArgMethod(candidate.javaClass, LINK_DAO) != null && noArgMethod(candidate.javaClass, USER_DAO) != null
 
-    private suspend fun callSuspend(target: Any, name: String, vararg args: Any?): Any? {
+    internal suspend fun callSuspend(target: Any, name: String, vararg args: Any?): Any? {
         val method = target.javaClass.methods.firstOrNull {
             it.name == name &&
                 it.parameterTypes.size == args.size + 1 &&
@@ -166,7 +166,7 @@ internal object HostLinkCache {
         }
     }
 
-    private fun property(target: Any, name: String): Any? {
+    internal fun property(target: Any, name: String): Any? {
         val getter = "get" + name.replaceFirstChar { it.uppercaseChar() }
         noArgMethod(target.javaClass, getter)?.let { method ->
             return runCatching {
@@ -177,15 +177,15 @@ internal object HostLinkCache {
         return findField(target.javaClass, name)?.let { read(it, target) }
     }
 
-    private fun shardsOf(component: Any): List<Any> =
+    internal fun shardsOf(component: Any): List<Any> =
         instanceFields(component.javaClass)
             .filter { it.type.name.contains("Shard") }
             .mapNotNull { read(it, component) }
 
-    private fun isMemoizing(value: Any): Boolean =
+    internal fun isMemoizing(value: Any): Boolean =
         sentinelOf(value.javaClass) != null && findField(value.javaClass, INSTANCE_FIELD) != null
 
-    private fun memoized(provider: Any): Any? {
+    internal fun memoized(provider: Any): Any? {
         val sentinel = sentinelOf(provider.javaClass) ?: return null
         val field = findField(provider.javaClass, INSTANCE_FIELD) ?: return null
         val instance = read(field, provider) ?: return null
@@ -200,7 +200,7 @@ internal object HostLinkCache {
         return read(field, null)
     }
 
-    private fun instanceFields(type: Class<*>): List<Field> =
+    internal fun instanceFields(type: Class<*>): List<Field> =
         allFields(type).filterNot { Modifier.isStatic(it.modifiers) }
 
     private fun findField(type: Class<*>, name: String): Field? =
@@ -216,18 +216,18 @@ internal object HostLinkCache {
         return fields
     }
 
-    private fun read(field: Field, owner: Any?): Any? =
+    internal fun read(field: Field, owner: Any?): Any? =
         runCatching {
             field.isAccessible = true
             field.get(owner)
         }.getOrNull()
 
-    private fun noArgMethod(type: Class<*>, name: String): Method? =
+    internal fun noArgMethod(type: Class<*>, name: String): Method? =
         generateSequence(type) { it.superclass }
             .firstNotNullOfOrNull { runCatching { it.getDeclaredMethod(name) }.getOrNull() }
             ?: runCatching { type.getMethod(name) }.getOrNull()
 
-    private fun invokeNoArg(target: Any, name: String): Any? =
+    internal fun invokeNoArg(target: Any, name: String): Any? =
         runCatching {
             val method = noArgMethod(target.javaClass, name) ?: return null
             method.isAccessible = true
