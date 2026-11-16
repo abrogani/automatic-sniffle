@@ -8,4 +8,4 @@
 | LookMovie | 🔵 BETA |
 | Stremio | 🟢 OK |
 | StreamPlay | 🟢 OK |
-| MyTorrentClient | 🔵 BETA |
+| ServeTorr | 🔵 BETA |
