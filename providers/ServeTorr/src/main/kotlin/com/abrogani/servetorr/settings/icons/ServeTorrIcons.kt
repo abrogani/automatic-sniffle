@@ -116,6 +116,17 @@ internal object ServeTorrIcons {
 
     val Check: ImageVector by lazy { icon("Check", "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z") }
 
+    val OpenInNew: ImageVector by lazy {
+        icon(
+            "OpenInNew",
+            "M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z",
+        )
+    }
+
+    val Info: ImageVector by lazy {
+        icon("Info", "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z")
+    }
+
     val Refresh: ImageVector by lazy {
         icon(
             "Refresh",
