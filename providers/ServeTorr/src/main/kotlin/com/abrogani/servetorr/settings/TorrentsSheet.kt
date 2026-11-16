@@ -122,22 +122,6 @@ internal fun TorrentsSheet(
                 onRefresh = { refreshKey++ },
             )
 
-            if (!running) {
-                StoppedNotice(
-                    hasLeftovers = !torrents.isNullOrEmpty(),
-                    busy = busy,
-                    onStart = {
-                        act {
-                            if (engine.ensureRunning() == null) {
-                                "The engine isn't installed. Download it first."
-                            } else {
-                                "Engine started."
-                            }
-                        }
-                    },
-                )
-            }
-
             loadError?.let {
                 Text(text = it, style = MaterialTheme.typography.bodyMedium, color = colors.error)
             }
@@ -204,11 +188,10 @@ internal fun TorrentsSheet(
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             icon = { Icon(ServeTorrIcons.DeleteSweep, contentDescription = null, tint = colors.error) },
-            title = { Text("Clear cached torrents?") },
+            title = { Text("Clear cache?") },
             text = {
                 Text(
-                    "Removes every torrent and its cached data, including anything left over from earlier engine " +
-                        "versions. The engine and your settings stay.",
+                    "Removes every torrent and its cache, including old engine leftovers. Engine and settings stay.",
                 )
             },
             confirmButton = {
@@ -263,42 +246,6 @@ private fun SheetHeader(
 }
 
 @Composable
-private fun StoppedNotice(
-    hasLeftovers: Boolean,
-    busy: Boolean,
-    onStart: () -> Unit,
-) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        color = colors.secondary.copy(alpha = 0.08f).compositeOver(colors.surfaceContainerHigh),
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = if (hasLeftovers) {
-                    "The engine is stopped. These torrents are only cached on disk."
-                } else {
-                    "The engine is stopped."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            Button(
-                onClick = onStart,
-                enabled = !busy,
-                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-            ) { ButtonLabel(ServeTorrIcons.PlayArrow, "Start engine") }
-        }
-    }
-}
-
-@Composable
 private fun EmptyState(running: Boolean) {
     val colors = MaterialTheme.colorScheme
     Column(
@@ -319,11 +266,7 @@ private fun EmptyState(running: Boolean) {
         }
         Text(text = "No torrents", style = MaterialTheme.typography.titleMedium)
         Text(
-            text = if (running) {
-                "Torrents you play show up here while they're loaded."
-            } else {
-                "Nothing is cached on disk. Torrents you play show up here."
-            },
+            text = if (running) "Played torrents show up here." else "Engine stopped. Nothing cached.",
             style = MaterialTheme.typography.bodySmall,
             color = colors.onSurfaceVariant,
         )
@@ -440,7 +383,7 @@ private fun ClearCacheFooter(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = "Deletes every torrent and its cache. Keeps the engine and settings.",
+                text = "Engine and settings stay.",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
