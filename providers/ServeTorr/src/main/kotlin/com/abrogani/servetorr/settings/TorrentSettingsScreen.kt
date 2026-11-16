@@ -96,6 +96,7 @@ internal fun TorrentSettingsScreen(
     settings: DataStore<Preferences>,
     engine: TorrentEngine,
     isInterceptorInstalled: () -> Boolean,
+    linksCapabilityEnabled: suspend () -> Boolean?,
     proxyPort: () -> Int?,
     onPortChange: (Int) -> Unit,
     backgroundScope: CoroutineScope,
@@ -110,6 +111,7 @@ internal fun TorrentSettingsScreen(
                 settings = settings,
                 engine = engine,
                 isInterceptorInstalled = isInterceptorInstalled,
+                linksCapabilityEnabled = linksCapabilityEnabled,
                 proxyPort = proxyPort,
                 onPortChange = onPortChange,
                 backgroundScope = backgroundScope,
@@ -123,6 +125,7 @@ private fun SettingsContent(
     settings: DataStore<Preferences>,
     engine: TorrentEngine,
     isInterceptorInstalled: () -> Boolean,
+    linksCapabilityEnabled: suspend () -> Boolean?,
     proxyPort: () -> Int?,
     onPortChange: (Int) -> Unit,
     backgroundScope: CoroutineScope,
@@ -134,10 +137,12 @@ private fun SettingsContent(
 
     var interceptorInstalled by remember { mutableStateOf(isInterceptorInstalled()) }
     var runningProxyPort by remember { mutableStateOf(proxyPort()) }
+    var linksCapability by remember { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
             interceptorInstalled = isInterceptorInstalled()
             runningProxyPort = proxyPort()
+            linksCapability = linksCapabilityEnabled()
             delay(STATUS_REFRESH_MILLIS)
         }
     }
@@ -159,6 +164,7 @@ private fun SettingsContent(
             settings = settings,
             intercept = intercept,
             interceptorInstalled = interceptorInstalled,
+            linksCapabilityOff = linksCapability == false,
             runningProxyPort = runningProxyPort,
             onPortChange = onPortChange,
         )
@@ -502,6 +508,7 @@ private fun LinksSection(
     settings: DataStore<Preferences>,
     intercept: Boolean,
     interceptorInstalled: Boolean,
+    linksCapabilityOff: Boolean,
     runningProxyPort: Int?,
     onPortChange: (Int) -> Unit,
 ) {
@@ -519,14 +526,14 @@ private fun LinksSection(
     ) {
         SwitchRow(
             title = "Handle torrent links",
-            summary = if (interceptorInstalled) {
-                "From all your providers."
-            } else {
-                "Not supported on this app version."
+            summary = when {
+                !interceptorInstalled -> "Not supported on this app version."
+                linksCapabilityOff -> "Off: Links is disabled for ServeTorr in Providers."
+                else -> "From all your providers."
             },
             checked = intercept,
             enabled = interceptorInstalled,
-            summaryIsError = !interceptorInstalled,
+            summaryIsError = !interceptorInstalled || linksCapabilityOff,
             onCheckedChange = { scope.launch { settings.setBool(INTERCEPT_KEY, it) } },
         )
 
