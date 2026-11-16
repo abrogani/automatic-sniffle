@@ -63,11 +63,16 @@ engine version, re-applies our patches, runs the smoke tests and the build, and 
 `[FAILING]` when a patch or test breaks). Nothing reaches users until that PR is merged, tagged, and the provider PR is
 merged and released.
 
-**Engine updates on device.** When the provider ships a new `VERSION`, the new files aren't on disk yet. At startup, if
-the user had the engine (an `engine_wanted` flag set on install and cleared by "Remove engine", or an older version dir
-on disk), the new version is downloaded automatically, waiting for Wi-Fi when Wi-Fi only is on. The old version dir is
-deleted after the new one verifies. If the old `.so` is still loaded in the process, the state becomes
-`RestartRequired` and the settings ask for an app restart.
+**Engine updates on device.** Each install writes `engine/<VERSION>/.pins`, a hash of the version and the pinned hashes
+for this ABI; a mismatched marker counts as "needs update" (never as corrupt). Older installs without a marker are hashed
+once and then marked. At startup the engine is downloaded automatically when the user had it
+(`filesDir/torrent/engine_wanted` is `1` after install and `0` after "Remove engine"; the old per-profile DataStore flag
+is migrated once), an older version dir exists, or the pins are stale. With Wi-Fi only on, it waits for Wi-Fi: network
+changes wake it, with a 1 h fallback poll, and the card shows "Update pending". The decision is re-checked inside the
+install lock right before downloading, so "Remove engine" during the wait cancels it. A missing release (404) shows
+"Engine v<N> isn't published yet" until an install succeeds. Older and legacy dirs are deleted after the new one
+verifies; a higher-numbered dir holding `bindings.dex` or `.pins` belongs to a newer copy and is kept. If the old `.so`
+is loaded, the state becomes `RestartRequired`.
 
 **Install.** `EngineInstaller` range-requests the AAR's ZIP tail, reads the central directory, and fetches only
 `jni/<abi>/libgojni.so` and `classes.dex` (one range each, roughly 9 MB). If the server ignores `Range`, it streams the
@@ -104,7 +109,8 @@ with a `DexClassLoader` whose library search path is the engine dir. It can't li
 
 | Path | Contents |
 |---|---|
-| `filesDir/torrent/engine/<VERSION>/` | `libgojni.so`, `bindings.dex`, `oat/` (ART) |
+| `filesDir/torrent/engine/<VERSION>/` | `libgojni.so`, `bindings.dex`, `.pins`, `oat/` (ART) |
+| `filesDir/torrent/engine_wanted`, `.engine.lock` | app-wide "user wants the engine" marker; cross-copy install lock |
 | `cacheDir/torrent/server/` | engine DB (`config.db`, `settings.json`, `viewed.json`) |
 | `cacheDir/torrent/cache/<hash>/` | disk cache, when enabled |
 
@@ -114,7 +120,7 @@ Every deletion of engine files is logged with path and size. Missing or failed-v
 
 | Setting | Stored in | Notes |
 |---|---|---|
-| Intercept links | host (`installed_providers.isMediaLinkEnabled`) | No in-app switch: ServeTorr's **Links** capability in the host's provider screen turns interception on and off. The Links card says when it's off. |
+| Intercept links | host (`installed_providers.isMediaLinkEnabled`) | No in-app switch: ServeTorr's **Streams** toggle in the host's Providers screen turns interception on and off. The Links card says when it's off, or when the toggle can't be read (links are then always handled). |
 | Link port | plugin DataStore | Default 47390. Changing it rebinds the proxy live. Links cached on the old port are purged. |
 | Wi-Fi only | plugin DataStore | Proxy answers 503 off Wi-Fi/Ethernet. A running engine stops when the default network leaves Wi-Fi or the setting is turned on while off Wi-Fi. VPNs count as Wi-Fi when their underlying transport is Wi-Fi. |
 | Stop when idle | plugin DataStore | Minutes, 0 to 240, 0 = never. |
@@ -129,7 +135,8 @@ ship `material-icons`. The header icon is loaded with Coil from `ICON_URL`.
 **Torrents sheet.** Lists the engine's torrents plus disk-cache leftovers, refreshing every 2 s. Per-torrent removal
 calls `rem`, clears its viewed state and deletes its cache dir. **Clear cache** wipes all torrents, the disk cache, the
 engine DB (kept while running) and leftovers from older engine versions, including the CloudStream build. The installed
-engine and the user's settings are kept.
+engine and the user's settings are kept. If an update is pending, the engine is marked as wanted first so the update
+still happens after the old dir is gone; newer copies' dirs are kept.
 
 ## Host integration
 
@@ -140,8 +147,8 @@ behaviour; none of them throw.
 |---|---|---|
 | Cleartext to loopback | Swap OkHttp's `Platform` (checked per connection) | Host targets SDK 36 with no network security config. Only literal loopback is allowed (`127.x.y.z`, `::1`, `localhost`). |
 | Provider registry | Hilt `SingletonC` → `ProviderRepositoryImpl.pluginsMap` | `GetMediaLinksUseCaseImpl` calls `getMediaLinkApi()` fresh per request, so swapping map entries takes effect immediately. |
-| Link cache | Hilt → `AppDatabase` → `cachedMediaLinkDao()` / `userDao()` | The host replays cached links per (user, media, episode) while any is unexpired, and old raw magnets never expire. Any group holding a raw torrent link (once the engine is installed) or a proxy URL on an old port is deleted whole, after the proxy starts, on install, and on port change. |
-| Links capability | `getMediaLinkApi()` returns `PlaceholderLinkApi` (emits nothing); Hilt → `AppDatabase.installedProviderDao().getAll()` → our row's `isMediaLinkEnabled` for the current user (`UserSessionDataStore.currentUserId`) | Gives the host a Links toggle for ServeTorr and makes it control interception. If the row or user can't be read, interception stays on. |
+| Link cache | Hilt → `AppDatabase` → `cachedMediaLinkDao()` / `userDao()` | The host replays cached links per (user, media, episode) while any is unexpired, and old raw magnets never expire. Any group holding a raw torrent link (once the engine is installed) or a proxy URL on an old port is deleted whole, after the proxy starts, on install, and on port change. Turning Streams on purges raw torrent links the same way; turning it off purges every proxy URL so the host refetches raw links. |
+| Streams toggle | `getMediaLinkApi()` returns `PlaceholderLinkApi` (`STREAMS`, emits nothing); Hilt → `AppDatabase.installedProviderDao().getAsFlow(id, ownerId)` for the current user (`UserSessionDataStore.currentUserId`), falling back to `get`/`getAll()` polled every 5 s | Gives the host a Streams toggle for ServeTorr and makes it control interception. Reads are memoized for 1.5 s; host lookups that fail are retried at most every 5 s. If the row or user can't be read, interception stays on. |
 | Settings detection | Two wrapper classes, with and without `SettingsScreen` | The host checks `getDeclaredComposableMethod("SettingsScreen")` on the exact class. |
 
 Lifecycle quirks handled:
@@ -153,6 +160,9 @@ Lifecycle quirks handled:
   second, empty repository. Only memoizing `DoubleCheck`/`SingleCheck` instances are unwrapped.
 - **Stale proxy after a host update.** The old copy's proxy may still own the port. `GET /torrent-proxy/ping`
   identifies it so we can reuse it.
+- **Concurrent provider copies.** Install, remove, purge and Clear cache share one lock across every copy in the
+  process (a semaphore in `System.getProperties()` plus a file lock). Temp files are unique per attempt. Automatic
+  updates run only if this copy is still registered in `pluginsMap`, and are skipped when a newer engine is installed.
 - **Uninstall cleanup.** `onUnload` fires for uninstall, id-changing updates and backup restores. Cleanup runs 5 s and
   25 s later and deletes engine files only if no ServeTorr class remains in `pluginsMap` *and* our `.flx` (path read
   from the class loader) is gone.
@@ -183,8 +193,13 @@ On-device testing:
   can break them; the settings screen reports when interception is unavailable.
 - **Hash pins.** The current pins come from a macOS build. The first CI release's provider PR replaces them if the
   Linux output differs.
+- **Same-VERSION pin update while loaded.** The files are swapped safely, but the old binary keeps running until the app
+  restarts, with no prompt.
+- **Player picker.** ServeTorr shows up in the player's provider list (it has a Streams capability); picking it does
+  nothing useful. Turning its Streams toggle off hides it.
 - **Backup restore.** If a restore takes longer than about 25 s to bring ServeTorr back, the uninstall cleanup deletes
   the engine and it has to be downloaded again.
 - **Unexplained missing engine files.** Engine files were seen disappearing twice on an emulator and couldn't be
   reproduced. A likely cause is an older provider copy installing a different engine version and clearing the other
-  version dirs. All such deletions are now logged.
+  version dirs. All such deletions are now logged, older copies no longer delete newer version dirs,
+  and installs from different copies are serialised.

@@ -25,6 +25,9 @@ internal class EngineLayout(filesDir: File, cacheDir: File, val version: String)
     val engineDir = File(engineRoot, version)
     val libraryFile = File(engineDir, EngineSource.LIBRARY_NAME)
     val dexFile = File(engineDir, EngineSource.DEX_NAME)
+    val pinsMarker = File(engineDir, EngineUpdate.PINS_MARKER)
+    val wantedMarker = File(filesRoot, EngineUpdate.WANTED_MARKER)
+    val lockFile = File(filesRoot, EngineUpdate.LOCK_FILE)
     val dataDir = File(cacheRoot, "server")
     val diskCacheDir = File(cacheRoot, "cache")
 }
@@ -122,10 +125,11 @@ internal object TorrentInventory {
         if (!file.exists()) 0L else file.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
 
     fun staleFiles(layout: EngineLayout, engineHoldsData: Boolean): List<File> {
-        val engineFiles = setOf(layout.libraryFile.name, layout.dexFile.name, DEX_OPTIMIZED_DIR)
+        val engineFiles = setOf(layout.libraryFile.name, layout.dexFile.name, layout.pinsMarker.name, DEX_OPTIMIZED_DIR)
+        val kept = setOf(layout.engineRoot.name, layout.wantedMarker.name, layout.lockFile.name)
         return buildList {
-            addAll(layout.filesRoot.children { it.name != layout.engineRoot.name })
-            addAll(layout.engineRoot.children { it.name != layout.engineDir.name })
+            addAll(layout.filesRoot.children { it.name !in kept })
+            addAll(layout.engineRoot.children { it.name != layout.engineDir.name && !EngineUpdate.isNewerInstall(it, layout.version) })
             addAll(layout.engineDir.children { it.name !in engineFiles })
             addAll(layout.cacheRoot.children { it.name != layout.dataDir.name && it.name != layout.diskCacheDir.name })
             addAll(layout.diskCacheDir.children { true })

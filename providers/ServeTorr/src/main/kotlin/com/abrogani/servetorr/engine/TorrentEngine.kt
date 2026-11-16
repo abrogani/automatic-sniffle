@@ -16,11 +16,11 @@ import com.flixclusive.core.util.log.infoLog
 import com.flixclusive.core.util.log.warnLog
 import com.flixclusive.provider.extensions.getBool
 import com.flixclusive.provider.extensions.getString
-import com.flixclusive.provider.extensions.setBool
 import com.flixclusive.provider.extensions.setString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +47,7 @@ internal class TorrentEngine(
 
     val state: StateFlow<EngineState> = EngineRuntime.state.asStateFlow()
     val engineVersion: String = EngineSource.VERSION
+    val updatePending: StateFlow<Boolean> = EngineRuntime.updatePending.asStateFlow()
 
     private val _settings = MutableStateFlow(EngineSettings())
 
@@ -64,6 +65,10 @@ internal class TorrentEngine(
     private val dexFile get() = layout.dexFile
     private val dataDir get() = layout.dataDir
     private val diskCacheDir get() = layout.diskCacheDir
+
+    private val expectedPins: String? by lazy {
+        EngineSource.selectAbi(EngineRuntime.processAbis())?.let(EngineSource::pinFingerprint)
+    }
 
     init {
         when (EngineRuntime.state.value) {
@@ -150,7 +155,7 @@ internal class TorrentEngine(
 
     private fun notInstalled(): Int? {
         if (EngineRuntime.state.value !is EngineState.Installing) {
-            EngineRuntime.state.value = EngineState.NotInstalled
+            EngineRuntime.state.value = EngineRuntime.installFailure?.let(EngineState::Failed) ?: EngineState.NotInstalled
         }
         return null
     }
@@ -236,7 +241,10 @@ internal class TorrentEngine(
         }
     }
 
-    val hasEngineFiles: Boolean get() = libraryFile.isFile && dexFile.isFile
+    val hasEngineFiles: Boolean
+        get() = libraryFile.isFile && dexFile.isFile && pinsState() != EngineUpdate.Pins.MISMATCH
+
+    private fun pinsState(): EngineUpdate.Pins = EngineUpdate.pinsState(layout.pinsMarker, expectedPins)
 
     override suspend fun files(link: TorrentLink): List<TorrentFile> = metadata(link).files
 
@@ -307,12 +315,8 @@ internal class TorrentEngine(
     suspend fun clearCache(): CacheClearResult {
         val result = EngineRuntime.mutex.withLock {
             check(EngineRuntime.pendingStart?.isActive != true) { "The engine is still starting. Try again in a moment." }
-            check(EngineRuntime.installMutex.tryLock()) { "The engine is being downloaded. Try again when it's done." }
-            try {
-                clearCacheLocked()
-            } finally {
-                EngineRuntime.installMutex.unlock()
-            }
+            EngineRuntime.installLock.tryWithLock(layout.lockFile) { clearCacheLocked() }
+                ?: throw IllegalStateException("The engine is being downloaded. Try again when it's done.")
         }
         settle()
         return result
@@ -324,6 +328,8 @@ internal class TorrentEngine(
         val holdsData = port != null || EngineRuntime.flags.startedPort != null
         val before = withIOContext { TorrentInventory.sizeOf(layout.filesRoot) + TorrentInventory.sizeOf(layout.cacheRoot) }
         val hashes = withIOContext { TorrentInventory.diskCache(layout.diskCacheDir).keys.toMutableSet() }
+
+        if (updateNeeded()) withIOContext { writeWanted(true) }
 
         if (port != null) {
             try {
@@ -356,7 +362,7 @@ internal class TorrentEngine(
             if (e is CancellationException) throw e
             warnLog("[ServeTorr] Could not stop the engine before removing it: ${e.message}")
         }
-        EngineRuntime.installMutex.withLock {
+        EngineRuntime.installLock.withLock(layout.lockFile) {
             withIOContext {
                 val layout = layout
                 listOf(layout.filesRoot, layout.cacheRoot).forEach { dir ->
@@ -365,6 +371,8 @@ internal class TorrentEngine(
                 }
                 EngineRuntime.verifiedEngine = null
             }
+            EngineRuntime.installFailure = null
+            EngineRuntime.updatePending.value = false
             settle()
         }
     }
@@ -450,36 +458,54 @@ internal class TorrentEngine(
             ?: throw IllegalStateException("The torrent engine didn't apply the settings in time.")
     }
 
-    suspend fun install() {
-        EngineRuntime.installMutex.withLock {
+    suspend fun install(automatic: Boolean = false, stillCurrent: suspend () -> Boolean = { true }) {
+        EngineRuntime.installLock.withLock(layout.lockFile) {
             try {
-                if (isInstalled()) return@withLock settle()
+                if (automatic) {
+                    if (!stillCurrent()) {
+                        infoLog("[ServeTorr] This copy of the provider is no longer loaded; skipping the engine update")
+                        return@withLock
+                    }
+                    if (!updateNeeded()) {
+                        infoLog("[ServeTorr] The engine update is no longer needed")
+                        return@withLock
+                    }
+                }
+
+                if (pinsState() != EngineUpdate.Pins.MISMATCH && isInstalled()) {
+                    EngineRuntime.installFailure = null
+                    settle()
+                    if (!automatic) withIOContext { writeWanted(true) }
+                    return@withLock
+                }
 
                 val abis = EngineRuntime.processAbis()
                 val abi = EngineSource.selectAbi(abis)
                 if (abi == null) {
-                    EngineRuntime.state.value = EngineState.Failed(
-                        "This device's CPU (${abis.joinToString()}) isn't supported by the torrent engine."
-                    )
+                    fail("This device's CPU (${abis.joinToString()}) isn't supported by the torrent engine.")
                     return@withLock
                 }
 
                 EngineRuntime.state.value = EngineState.Installing(0, 0)
                 withIOContext {
-                    engineDir.mkdirs()
-                    installer.install(abi, engineDir) { downloaded, total ->
+                    val layout = layout
+                    layout.engineDir.mkdirs()
+                    installer.install(abi, layout.engineDir) { downloaded, total ->
                         EngineRuntime.state.value = EngineState.Installing(downloaded, total)
                     }
-                    EngineRuntime.verifiedEngine = engineDir.absolutePath
-                    rootDir.listFiles()
-                        ?.filter { it.name != EngineSource.VERSION }
-                        ?.forEach {
-                            infoLog("[ServeTorr] Deleting old engine files ${it.absolutePath} (${TorrentInventory.sizeOf(it)} bytes)")
-                            it.deleteTree()
-                        }
+                    EngineSource.pinFingerprint(abi)?.let { EngineUpdate.writePins(layout.pinsMarker, it) }
+                    EngineRuntime.verifiedEngine = layout.engineDir.absolutePath
+                    EngineUpdate.replacedByInstall(layout.engineRoot, EngineSource.VERSION).forEach {
+                        infoLog("[ServeTorr] Deleting old engine files ${it.absolutePath} (${TorrentInventory.sizeOf(it)} bytes)")
+                        it.deleteTree()
+                    }
+                    EngineUpdate.newerVersions(layout.engineRoot, EngineSource.VERSION).forEach {
+                        infoLog("[ServeTorr] Keeping newer engine files ${File(layout.engineRoot, it).absolutePath}")
+                    }
                 }
+                EngineRuntime.installFailure = null
                 settle()
-                if (hasEngineFiles) rememberWanted(true)
+                if (hasEngineFiles) withIOContext { writeWanted(true) }
             } catch (e: Throwable) {
                 if (e is CancellationException) {
                     settle()
@@ -487,55 +513,112 @@ internal class TorrentEngine(
                 }
 
                 errorLog(e)
-                EngineRuntime.state.value = EngineState.Failed(
-                    "Couldn't install the torrent engine: ${e.message ?: e.javaClass.simpleName}"
+                fail(
+                    if (e is EngineInstaller.EngineNotPublished) {
+                        e.message ?: "This engine version isn't published yet."
+                    } else {
+                        "Couldn't install the torrent engine: ${e.message ?: e.javaClass.simpleName}"
+                    }
                 )
             }
         }
     }
 
+    private fun fail(message: String) {
+        EngineRuntime.installFailure = message
+        EngineRuntime.state.value = EngineState.Failed(message)
+    }
+
     suspend fun remove() {
         stop()
-        EngineRuntime.installMutex.withLock {
+        EngineRuntime.installLock.withLock(layout.lockFile) {
             withIOContext {
+                writeWanted(false)
                 infoLog("[ServeTorr] Removing the engine: ${TorrentInventory.describeEngineFiles(layout)}")
                 rootDir.deleteTree()
                 dataDir.deleteTree()
                 diskCacheDir.deleteTree()
                 EngineRuntime.verifiedEngine = null
             }
+            EngineRuntime.installFailure = null
+            EngineRuntime.updatePending.value = false
             settle()
         }
-        rememberWanted(false)
     }
 
-    suspend fun updateWanted(): Boolean {
-        val previous = EngineUpdate.previousVersions(rootDir, EngineSource.VERSION)
-        val wanted = runCatching { store().getBool(EngineUpdate.WANTED_KEY, false) }.getOrDefault(false)
-        val update = EngineUpdate.shouldUpdate(hasEngineFiles, wanted, previous)
+    suspend fun autoUpdate(
+        blockReason: suspend () -> String?,
+        wakeups: Flow<Any?>,
+        stillCurrent: suspend () -> Boolean,
+    ) = EngineAutoUpdate(
+        updateNeeded = ::updateNeeded,
+        install = { install(automatic = true, stillCurrent = stillCurrent) },
+        blockReason = blockReason,
+        wakeups = wakeups,
+        pending = EngineRuntime.updatePending,
+    ).run()
+
+    suspend fun updateNeeded(): Boolean = withIOContext {
+        val layout = layout
+        val previous = EngineUpdate.previousVersions(layout.engineRoot, EngineSource.VERSION)
+        val newer = EngineUpdate.newerVersions(layout.engineRoot, EngineSource.VERSION)
+        val present = layout.libraryFile.isFile && layout.dexFile.isFile
+        val stalePins = present && resolvePins(layout) == EngineUpdate.Pins.MISMATCH
+        val update = EngineUpdate.shouldUpdate(
+            installed = present && !stalePins,
+            wanted = readWanted(),
+            previousVersions = previous,
+            stalePins = stalePins,
+            newerInstalled = newer.isNotEmpty(),
+        )
         if (update) {
             infoLog(
-                "[ServeTorr] Engine ${EngineSource.VERSION} isn't installed; updating " +
-                    "(previous: ${previous.ifEmpty { listOf("none on disk") }.joinToString()})"
+                "[ServeTorr] Engine ${EngineSource.VERSION} isn't installed or is outdated; updating " +
+                    "(stale pins: $stalePins, previous: ${previous.ifEmpty { listOf("none on disk") }.joinToString()})"
             )
+        } else if (newer.isNotEmpty() && !present) {
+            infoLog("[ServeTorr] A newer engine (${newer.joinToString()}) is installed; not downloading ${EngineSource.VERSION}")
         }
-        return update
+        update
     }
 
-    private suspend fun rememberWanted(wanted: Boolean) {
-        runCatching { store().setBool(EngineUpdate.WANTED_KEY, wanted) }
+    private fun resolvePins(layout: EngineLayout): EngineUpdate.Pins {
+        val state = EngineUpdate.pinsState(layout.pinsMarker, expectedPins)
+        if (state != EngineUpdate.Pins.UNKNOWN) return state
+        val abi = EngineSource.selectAbi(EngineRuntime.processAbis()) ?: return state
+        val files = EngineSource.engineFiles(abi) ?: return state
+        val actual = files.map { it.fileName to File(layout.engineDir, it.fileName).sha256() }
+        val fingerprint = EngineSource.fingerprint(EngineSource.VERSION, actual)
+        runCatching { EngineUpdate.writePins(layout.pinsMarker, fingerprint) }
+            .onFailure { warnLog("[ServeTorr] Could not record the engine pins: ${it.message}") }
+        return if (fingerprint == expectedPins) EngineUpdate.Pins.MATCH else EngineUpdate.Pins.MISMATCH
+    }
+
+    private suspend fun readWanted(): Boolean {
+        val marker = layout.wantedMarker
+        EngineUpdate.readWanted(marker)?.let { return it }
+        val legacy = runCatching { store().getBool(EngineUpdate.WANTED_KEY, false) }.getOrDefault(false)
+        if (legacy) writeWanted(true)
+        return legacy
+    }
+
+    private fun writeWanted(wanted: Boolean) {
+        runCatching { EngineUpdate.writeWanted(layout.wantedMarker, wanted) }
             .onFailure { warnLog("[ServeTorr] Could not save the engine install flag: ${it.message}") }
     }
 
     private fun settle() {
-        if (!hasEngineFiles) reportMissingEngineFiles()
-        EngineRuntime.state.value = EngineStartPolicy.settledState(
+        val installed = hasEngineFiles
+        if (!installed) reportMissingEngineFiles()
+        val settled = EngineStartPolicy.settledState(
             flags = EngineRuntime.flags,
             version = EngineSource.VERSION,
             port = EngineRuntime.port,
             bindingsAvailable = EngineRuntime.bindingsAvailable,
-            installed = hasEngineFiles,
+            installed = installed,
         )
+        val failure = EngineRuntime.installFailure
+        EngineRuntime.state.value = if (settled == EngineState.NotInstalled && failure != null) EngineState.Failed(failure) else settled
     }
 
     private fun reportMissingEngineFiles() {
@@ -552,6 +635,11 @@ internal class TorrentEngine(
         val dir = engineDir
         if (EngineRuntime.verifiedEngine == dir.absolutePath && hasEngineFiles) return@withIOContext true
         EngineRuntime.verifiedEngine = null
+
+        if (pinsState() == EngineUpdate.Pins.MISMATCH) {
+            warnLog("[ServeTorr] Engine ${EngineSource.VERSION} files at ${dir.absolutePath} are from an older build; they need an update")
+            return@withIOContext false
+        }
 
         val abi = EngineSource.selectAbi(EngineRuntime.processAbis()) ?: return@withIOContext false
         val files = EngineSource.engineFiles(abi) ?: return@withIOContext false
@@ -576,6 +664,10 @@ internal class TorrentEngine(
         }
         if (corrupted.isEmpty() && present.size == files.size) {
             EngineRuntime.verifiedEngine = dir.absolutePath
+            EngineSource.pinFingerprint(abi)?.let { pins ->
+                runCatching { EngineUpdate.writePins(layout.pinsMarker, pins) }
+                    .onFailure { warnLog("[ServeTorr] Could not record the engine pins: ${it.message}") }
+            }
             true
         } else {
             false

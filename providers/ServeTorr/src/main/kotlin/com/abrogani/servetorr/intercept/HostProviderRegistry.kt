@@ -6,6 +6,7 @@ import com.flixclusive.provider.ProviderPlugin
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal object HostProviderRegistry {
     private const val REPOSITORY_HINT = "providerrepository"
@@ -13,19 +14,25 @@ internal object HostProviderRegistry {
     private const val INSTANCE_FIELD = "instance"
     private const val SENTINEL_FIELD = "UNINITIALIZED"
 
+    private val warned = AtomicBoolean(false)
+
     fun findPluginsFlow(context: Context): MutableStateFlow<Map<String, ProviderPlugin>>? {
         val app: Any = context.applicationContext ?: context
         val component = generatedComponent(app)
         if (component == null) {
-            warnLog("[ServeTorr] Host internals not found: ${app.javaClass.name} exposes no Hilt component; torrent links from other providers won't be intercepted")
+            warnOnce("[ServeTorr] Host internals not found: ${app.javaClass.name} exposes no Hilt component; torrent links from other providers won't be intercepted")
             return null
         }
 
         val flow = findPluginsFlowIn(component)
         if (flow == null) {
-            warnLog("[ServeTorr] Host internals not found: no provider registry in ${component.javaClass.name}; torrent links from other providers won't be intercepted")
+            warnOnce("[ServeTorr] Host internals not found: no provider registry in ${component.javaClass.name}; torrent links from other providers won't be intercepted")
         }
         return flow
+    }
+
+    private fun warnOnce(message: String) {
+        if (warned.compareAndSet(false, true)) warnLog(message)
     }
 
     fun generatedComponent(app: Any): Any? {

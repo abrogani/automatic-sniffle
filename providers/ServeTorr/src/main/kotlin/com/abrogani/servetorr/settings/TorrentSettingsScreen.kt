@@ -80,6 +80,7 @@ import coil3.compose.AsyncImagePainter
 import com.abrogani.servetorr.engine.EngineSettings
 import com.abrogani.servetorr.engine.EngineState
 import com.abrogani.servetorr.engine.TorrentEngine
+import com.abrogani.servetorr.intercept.StreamsToggle
 import com.abrogani.servetorr.settings.icons.ServeTorrIcons
 import com.abrogani.servetorr.settings.theme.ServeTorrTheme
 import com.flixclusive.provider.extensions.getBoolAsFlow
@@ -88,6 +89,7 @@ import com.flixclusive.provider.extensions.setBool
 import com.flixclusive.provider.extensions.setInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -96,7 +98,7 @@ internal fun TorrentSettingsScreen(
     settings: DataStore<Preferences>,
     engine: TorrentEngine,
     isInterceptorInstalled: () -> Boolean,
-    linksCapabilityEnabled: suspend () -> Boolean?,
+    streamsToggle: StateFlow<StreamsToggle?>,
     proxyPort: () -> Int?,
     onPortChange: (Int) -> Unit,
     backgroundScope: CoroutineScope,
@@ -111,7 +113,7 @@ internal fun TorrentSettingsScreen(
                 settings = settings,
                 engine = engine,
                 isInterceptorInstalled = isInterceptorInstalled,
-                linksCapabilityEnabled = linksCapabilityEnabled,
+                streamsToggle = streamsToggle,
                 proxyPort = proxyPort,
                 onPortChange = onPortChange,
                 backgroundScope = backgroundScope,
@@ -125,7 +127,7 @@ private fun SettingsContent(
     settings: DataStore<Preferences>,
     engine: TorrentEngine,
     isInterceptorInstalled: () -> Boolean,
-    linksCapabilityEnabled: suspend () -> Boolean?,
+    streamsToggle: StateFlow<StreamsToggle?>,
     proxyPort: () -> Int?,
     onPortChange: (Int) -> Unit,
     backgroundScope: CoroutineScope,
@@ -134,12 +136,11 @@ private fun SettingsContent(
 
     var interceptorInstalled by remember { mutableStateOf(isInterceptorInstalled()) }
     var runningProxyPort by remember { mutableStateOf(proxyPort()) }
-    var linksCapability by remember { mutableStateOf<Boolean?>(null) }
+    val toggle by streamsToggle.collectAsState()
     LaunchedEffect(Unit) {
         while (true) {
             interceptorInstalled = isInterceptorInstalled()
             runningProxyPort = proxyPort()
-            linksCapability = linksCapabilityEnabled()
             delay(STATUS_REFRESH_MILLIS)
         }
     }
@@ -160,7 +161,7 @@ private fun SettingsContent(
         LinksSection(
             settings = settings,
             interceptorInstalled = interceptorInstalled,
-            linksCapabilityOff = linksCapability == false,
+            streamsToggle = toggle,
             runningProxyPort = runningProxyPort,
             onPortChange = onPortChange,
         )
@@ -221,6 +222,8 @@ private fun EngineCard(
     }
     val colors = MaterialTheme.colorScheme
     val running = state is EngineState.Running
+    val updatePending by engine.updatePending.collectAsState()
+    val showPending = updatePending && state !is EngineState.Installing && state !is EngineState.RestartRequired
 
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -321,13 +324,14 @@ private fun EngineCard(
                 }
             }
 
-            state.notice()?.let { notice ->
+            (if (showPending) UPDATE_PENDING_NOTICE else state.notice())?.let { notice ->
                 Text(
                     text = notice,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = when (state) {
-                        is EngineState.Failed -> colors.error
-                        is EngineState.RestartRequired -> colors.tertiary
+                    color = when {
+                        showPending -> colors.onSurfaceVariant
+                        state is EngineState.Failed -> colors.error
+                        state is EngineState.RestartRequired -> colors.tertiary
                         else -> colors.onSurfaceVariant
                     },
                 )
@@ -503,7 +507,7 @@ private fun NetworkCallout() {
 private fun LinksSection(
     settings: DataStore<Preferences>,
     interceptorInstalled: Boolean,
-    linksCapabilityOff: Boolean,
+    streamsToggle: StreamsToggle?,
     runningProxyPort: Int?,
     onPortChange: (Int) -> Unit,
 ) {
@@ -521,7 +525,8 @@ private fun LinksSection(
     ) {
         when {
             !interceptorInstalled -> "Torrent links can't be handled on this app version."
-            linksCapabilityOff -> "Off. Turn on Links for ServeTorr in Providers."
+            streamsToggle == StreamsToggle.OFF -> "Off. Turn on Streams for ServeTorr in Providers."
+            streamsToggle == StreamsToggle.UNREADABLE -> "Can't read the Streams toggle; torrent links are always handled."
             else -> null
         }?.let {
             Text(text = it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -1076,6 +1081,8 @@ private fun EngineState.notice(): String? =
         is EngineState.Failed -> message
         is EngineState.RestartRequired -> "Restart the app. $reason"
     }
+
+private const val UPDATE_PENDING_NOTICE = "Update pending — waiting for Wi-Fi."
 
 private val RETRACKER_MODES = listOf(
     "Torrent's own only",

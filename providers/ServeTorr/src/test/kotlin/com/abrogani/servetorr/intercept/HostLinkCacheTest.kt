@@ -140,6 +140,64 @@ class HostLinkCacheTest {
     }
 
     @Test
+    fun `turning interception off purges proxy urls on any port and keeps raw torrents`() {
+        val policy = StaleLinkPolicy.forInterception(enabled = false, currentProxyPort = 47390, engineInstalled = true)
+
+        expectThat(policy.purgesNothing).isFalse()
+        expectThat(policy.isStale(proxyUrl(47390))).isTrue()
+        expectThat(policy.isStale(proxyUrl(1111, episode))).isTrue()
+        expectThat(policy.isStale(SINTEL)).isFalse()
+        expectThat(policy.isStale("https://cdn/movie.m3u8")).isFalse()
+    }
+
+    @Test
+    fun `interception on keeps the install time policy`() {
+        val policy = StaleLinkPolicy.forInterception(enabled = true, currentProxyPort = 47390, engineInstalled = true)
+
+        expectThat(policy.isStale(SINTEL)).isTrue()
+        expectThat(policy.isStale(proxyUrl(47390))).isFalse()
+        expectThat(policy.isStale(proxyUrl(1111))).isTrue()
+        expectThat(StaleLinkPolicy.forInterception(true, null, true).purgesNothing).isTrue()
+    }
+
+    @Test
+    fun `toggle changes pick the purge`() {
+        fun change(previous: StreamsToggle?, current: StreamsToggle, port: Int? = 47390, engine: Boolean = true) =
+            StaleLinkPolicy.onToggleChange(previous, current, port, engine)
+
+        expectThat(change(StreamsToggle.ON, StreamsToggle.OFF)!!.isStale(proxyUrl(47390))).isTrue()
+        expectThat(change(StreamsToggle.UNREADABLE, StreamsToggle.OFF)!!.isStale(SINTEL)).isFalse()
+        expectThat(change(null, StreamsToggle.OFF)!!.isStale(proxyUrl(1111))).isTrue()
+
+        expectThat(change(StreamsToggle.OFF, StreamsToggle.ON)!!.isStale(SINTEL)).isTrue()
+        expectThat(change(StreamsToggle.OFF, StreamsToggle.UNREADABLE)!!.isStale(SINTEL)).isTrue()
+        expectThat(change(StreamsToggle.OFF, StreamsToggle.ON, port = null)).isNull()
+        expectThat(change(StreamsToggle.OFF, StreamsToggle.ON, engine = false)!!.isStale(SINTEL)).isFalse()
+
+        expectThat(change(null, StreamsToggle.ON)).isNull()
+        expectThat(change(null, StreamsToggle.UNREADABLE)).isNull()
+        expectThat(change(StreamsToggle.ON, StreamsToggle.UNREADABLE)).isNull()
+        expectThat(change(StreamsToggle.OFF, StreamsToggle.OFF)).isNull()
+    }
+
+    @Test
+    fun `turning interception off empties proxy groups so the host refetches`() {
+        val db = database(
+            FakeCachedStream(proxyUrl(47390), "1", "movie"),
+            FakeCachedStream("https://cdn/movie.m3u8", "1", "movie"),
+            FakeCachedStream(SINTEL, "2", "raw"),
+            FakeCachedStream("https://cdn/other.m3u8", "2", "other"),
+        )
+
+        val removed = runBlocking {
+            HostLinkCache.purgeIn(db, StaleLinkPolicy.forInterception(false, 47390, engineInstalled = true))
+        }
+
+        expectThat(removed).isEqualTo(2)
+        expectThat(db.cachedMediaLinkDao().rows.map { it.url }).containsExactlyInAnyOrder(SINTEL, "https://cdn/other.m3u8")
+    }
+
+    @Test
     fun `a proxy url whose name ends in torrent is still a proxy url`() {
         val link = TorrentLink.parse("$SINTEL.torrent")!!
         val url = ProxyUrl.build(47390, link, null)

@@ -182,6 +182,26 @@ class TorrentInventoryTest {
     }
 
     @Test
+    fun `stale files keep markers, the lock and newer engine installs`() {
+        val layout = populated()
+        val files = layout.filesRoot.parentFile
+        files.write("torrent/${EngineUpdate.WANTED_MARKER}", 1)
+        files.write("torrent/${EngineUpdate.LOCK_FILE}", 0)
+        files.write("torrent/engine/1/${EngineUpdate.PINS_MARKER}", 64)
+        files.write("torrent/engine/2/libgojni.so", 10)
+        files.write("torrent/engine/2/bindings.dex", 10)
+        expectThat(layout.relative(TorrentInventory.staleFiles(layout, engineHoldsData = true))).containsExactlyInAnyOrder(
+            "files:stray.bin",
+            "files:engine/st-1",
+            "files:engine/7861970",
+            "files:engine/1/libgojni.so.tmp",
+            "cachedir:old",
+            "cachedir:cache/$hashA",
+            "cachedir:server/torrserver.db",
+        )
+    }
+
+    @Test
     fun `stale files on an empty layout`() {
         val layout = EngineLayout(File(temp.root, "a"), File(temp.root, "b"), "1")
         expectThat(TorrentInventory.staleFiles(layout, engineHoldsData = false)).isEqualTo(emptyList())

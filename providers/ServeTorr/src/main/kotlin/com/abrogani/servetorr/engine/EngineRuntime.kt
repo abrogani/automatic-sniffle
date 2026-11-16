@@ -25,7 +25,12 @@ internal object EngineRuntime {
     val state = MutableStateFlow<EngineState>(EngineState.NotInstalled)
 
     val mutex = Mutex()
-    val installMutex = Mutex()
+    val installLock = EngineInstallLock()
+
+    val updatePending = MutableStateFlow(false)
+
+    @Volatile
+    var installFailure: String? = null
 
     val settingsMutex = Mutex()
 
