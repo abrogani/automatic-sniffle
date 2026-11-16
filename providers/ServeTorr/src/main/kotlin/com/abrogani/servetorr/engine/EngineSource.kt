@@ -15,10 +15,10 @@ internal object EngineSource {
     const val SERVER_CLASS = "torrServer.TorrServer"
 
     val LIBRARY_SHA256 = linkedMapOf(
-        "arm64-v8a" to "e8ccc44e1a464bea670b27b53e69a43b31a511a3bcf672fd35d823204a7d8f4b",
-        "armeabi-v7a" to "38df68f5ffd6f6e12f3241570f2a28f7f692f988f4862011c8888f4edda7dd92",
-        "x86_64" to "c75ec94861d510c31a9f2f67c634f4a242895ca9f8b8f56666a1449110e7f37d",
-        "x86" to "9e14803e9c411ec8c10d89230ce938a58048d8db7b5f7c71fce2b2e04d5e2d85",
+        "arm64-v8a" to "cbfadf83b5dede4afe8bd8d04aba36cad6e605b305c940bad41d9fe435b2bcdf",
+        "armeabi-v7a" to "b69232f4741087a7b37ff8cc9c7792146eb803c754ce5e979e5e00a52f23c067",
+        "x86_64" to "541c4f5815edc98a7b6e77a0cadfca87759dbf44e806e8fcaef955e42d971ee6",
+        "x86" to "20232288aa478ed8d097bf14572b1559dbfe5cb8ad169056c3a4c88058dfb15d",
     )
 
     const val MAX_ARCHIVE_BYTES = 64L * 1024 * 1024
