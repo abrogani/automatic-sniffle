@@ -1,0 +1,27 @@
+diff --git a/server/settings/db.go b/server/settings/db.go
+index add19b71..2fb8702f 100644
+--- a/server/settings/db.go
++++ b/server/settings/db.go
+@@ -18,7 +18,7 @@ type TDB struct {
+ var globalBboltDB TorrServerDB
+ 
+ func NewTDB() TorrServerDB {
+-	if globalBboltDB != nil {
++	if existing, ok := globalBboltDB.(*TDB); ok && existing.db != nil {
+ 		return globalBboltDB // Return existing instance
+ 	}
+ 	db, err := bolt.Open(filepath.Join(Path, "config.db"), 0o666, &bolt.Options{Timeout: 5 * time.Second})
+diff --git a/server/settings/dbreadcache.go b/server/settings/dbreadcache.go
+index 0a831ab1..9a4741ee 100644
+--- a/server/settings/dbreadcache.go
++++ b/server/settings/dbreadcache.go
+@@ -24,6 +24,9 @@ func NewDBReadCache(db TorrServerDB) TorrServerDB {
+ }
+ 
+ func (v *DBReadCache) CloseDB() {
++	if v.db == nil {
++		return
++	}
+ 	v.db.CloseDB()
+ 	v.db = nil
+ 	v.listCache = nil

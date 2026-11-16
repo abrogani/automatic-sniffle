@@ -1,0 +1,72 @@
+diff -ru a/go/Seq.java b/go/Seq.java
+--- a/go/Seq.java
++++ b/go/Seq.java
+@@ -31,12 +31,22 @@
+ 	public static final Ref nullRef = new Ref(NULL_REFNUM, null);
+ 
+ 	// The singleton GoRefQueue
+-	private static final GoRefQueue goRefQueue = new GoRefQueue();
++	private static GoRefQueue goRefQueue;
+ 
+-	static {
++	static Boolean hasLoaded = false;
++
++	public static synchronized void load() {
++		if (hasLoaded) {
++			return;
++		}
+ 		System.loadLibrary("gojni");
+ 		init();
++		goRefQueue = new GoRefQueue();
+ 		Universe.touch();
++		Universe._init();
++		torrServer.TorrServer.touch();
++		torrServer.TorrServer._init();
++		hasLoaded = true;
+ 	}
+ 
+ 	// setContext sets the context in the go-library to be used in RunOnJvm.
+diff -ru a/go/Universe.java b/go/Universe.java
+--- a/go/Universe.java
++++ b/go/Universe.java
+@@ -8,17 +8,13 @@
+ import go.Seq;
+ 
+ public abstract class Universe {
+-	static {
+-		Seq.touch(); // for loading the native library
+-		_init();
+-	}
+ 	
+ 	private Universe() {} // uninstantiable
+ 	
+ 	// touch is called from other bound packages to initialize this package
+ 	public static void touch() {}
+ 	
+-	private static native void _init();
++	public static native void _init();
+ 	
+ 	private static final class proxyerror extends Exception implements Seq.Proxy, error {
+ 		private final int refnum;
+diff -ru a/torrServer/TorrServer.java b/torrServer/TorrServer.java
+--- a/torrServer/TorrServer.java
++++ b/torrServer/TorrServer.java
+@@ -8,17 +8,13 @@
+ import go.Seq;
+ 
+ public abstract class TorrServer {
+-	static {
+-		Seq.touch(); // for loading the native library
+-		_init();
+-	}
+ 	
+ 	private TorrServer() {} // uninstantiable
+ 	
+ 	// touch is called from other bound packages to initialize this package
+ 	public static void touch() {}
+ 	
+-	private static native void _init();
++	public static native void _init();
+ 	
+ 	
+ 	
