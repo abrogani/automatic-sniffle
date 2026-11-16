@@ -14,7 +14,9 @@ import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withIOConte
 import com.flixclusive.core.util.log.errorLog
 import com.flixclusive.core.util.log.infoLog
 import com.flixclusive.core.util.log.warnLog
+import com.flixclusive.provider.extensions.getBool
 import com.flixclusive.provider.extensions.getString
+import com.flixclusive.provider.extensions.setBool
 import com.flixclusive.provider.extensions.setString
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -477,6 +479,7 @@ internal class TorrentEngine(
                         }
                 }
                 settle()
+                if (hasEngineFiles) rememberWanted(true)
             } catch (e: Throwable) {
                 if (e is CancellationException) {
                     settle()
@@ -503,6 +506,25 @@ internal class TorrentEngine(
             }
             settle()
         }
+        rememberWanted(false)
+    }
+
+    suspend fun updateWanted(): Boolean {
+        val previous = EngineUpdate.previousVersions(rootDir, EngineSource.VERSION)
+        val wanted = runCatching { store().getBool(EngineUpdate.WANTED_KEY, false) }.getOrDefault(false)
+        val update = EngineUpdate.shouldUpdate(hasEngineFiles, wanted, previous)
+        if (update) {
+            infoLog(
+                "[ServeTorr] Engine ${EngineSource.VERSION} isn't installed; updating " +
+                    "(previous: ${previous.ifEmpty { listOf("none on disk") }.joinToString()})"
+            )
+        }
+        return update
+    }
+
+    private suspend fun rememberWanted(wanted: Boolean) {
+        runCatching { store().setBool(EngineUpdate.WANTED_KEY, wanted) }
+            .onFailure { warnLog("[ServeTorr] Could not save the engine install flag: ${it.message}") }
     }
 
     private fun settle() {

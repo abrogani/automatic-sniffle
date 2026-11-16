@@ -34,6 +34,7 @@ flxProvider {
         - "Clear cache" removes every torrent and cached data, including leftovers from older engines.
         - Old torrent links the app had cached before the engine was installed are cleaned up, so they play now.
         - Engine files are removed when you uninstall the provider.
+        - New engine versions download automatically if you had the engine installed.
 
         # v0.0.2
 

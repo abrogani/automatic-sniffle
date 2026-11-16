@@ -98,6 +98,7 @@ class ServeTorr : ProviderPlugin() {
                 .collect { stopEngineIfBlocked() }
         }
         proxy.start(settings.getInt(PORT_KEY, DEFAULT_PORT).takeIf { it.isValidPort() } ?: DEFAULT_PORT)
+        scope.launch { updateEngineIfNeeded() }
         scope.launch { purgeStaleLinksOnInstall() }
     }
 
@@ -112,6 +113,12 @@ class ServeTorr : ProviderPlugin() {
 
     private suspend fun purgeStaleLinks() {
         HostLinkCache.purgeStaleTorrentLinks(application, proxy.port, engine.hasEngineFiles)
+    }
+
+    private suspend fun updateEngineIfNeeded() {
+        if (!engine.updateWanted()) return
+        while (network.blockReason() != null) delay(ENGINE_UPDATE_RETRY_MILLIS)
+        engine.install()
     }
 
     private suspend fun stopEngineIfBlocked() {
@@ -171,6 +178,7 @@ class ServeTorr : ProviderPlugin() {
         const val SETTINGS_WAIT_ATTEMPTS = 100
         const val SETTINGS_WAIT_STEP_MILLIS = 100L
         const val PORT_CHANGE_DEBOUNCE_MILLIS = 800L
+        const val ENGINE_UPDATE_RETRY_MILLIS = 15L * 60 * 1000
 
         @SuppressLint("PrivateApi")
         fun currentApplication(): Context? =

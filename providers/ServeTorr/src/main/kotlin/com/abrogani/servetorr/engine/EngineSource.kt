@@ -2,7 +2,7 @@ package com.abrogani.servetorr.engine
 
 internal object EngineSource {
     const val VERSION = "1"
-    const val AAR_URL = "https://github.com/abrogani/automatic-sniffle/releases/download/servetorr-engine-$VERSION/torrserver.aar"
+    const val AAR_URL = "https://github.com/abrogani/servetorr-engine/releases/download/v$VERSION/torrserver.aar"
 
     const val LIBRARY_NAME = "libgojni.so"
     const val DEX_ENTRY = "classes.dex"
