@@ -4,12 +4,17 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import com.abrogani.flixhq.api.USER_AGENT
+import com.flixclusive.core.util.log.errorLog
+import com.flixclusive.core.util.log.infoLog
 import com.flixclusive.core.util.webview.WebViewDriver
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -40,7 +45,20 @@ internal class ByseWebView(context: Context) : WebViewDriver(context) {
 
         val result = withTimeoutOrNull(ByseCaptures.CAPTURE_TIMEOUT_MILLIS) {
             suspendCancellableCoroutine<ByseCapture> { continuation ->
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                        message?.let {
+                            infoLog("ByseWebView console ${it.messageLevel()}: ${it.message()} (${it.sourceId()}:${it.lineNumber()})")
+                        }
+                        return true
+                    }
+                }
+
                 webViewClient = object : WebViewClient() {
+                    override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                        errorLog("ByseWebView load error ${error?.errorCode} ${error?.description} for ${request?.url}")
+                    }
+
                     override fun shouldInterceptRequest(
                         view: WebView?,
                         request: WebResourceRequest?,
@@ -52,10 +70,11 @@ internal class ByseWebView(context: Context) : WebViewDriver(context) {
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        infoLog("ByseWebView page finished: $url")
                         if (polling) return
                         polling = true
                         view?.post {
-                            Toast.makeText(context, "Tap play to verify and load the stream", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "If Byse asks you to verify, tap play", Toast.LENGTH_LONG).show()
                         }
                         poll(continuation)
                     }

@@ -26,16 +26,33 @@ internal class SubtitleResolver(
 
     companion object {
         private val SUBTITLE_PARAMETERS = listOf("sub.info", "subget")
+        private val LANGUAGE_CODE = Regex("""\s*\[[A-Za-z]{2,3}]""")
+        private val TRAILING_INDEX = Regex("""\s+\d+$""")
+
+        fun cleanLabel(label: String): String =
+            label.replace(LANGUAGE_CODE, "").replace(TRAILING_INDEX, "").trim().trimEnd('-').trim()
 
         fun parse(json: String): List<Subtitle> =
-            parseJson(json).toList<SubtitleTrackDto>().mapNotNull { track ->
+            disambiguate(parseJson(json).toList<SubtitleTrackDto>().mapNotNull { track ->
                 val file = track.file?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
                 if (track.kind != null && track.kind != "captions") return@mapNotNull null
 
                 Subtitle(
-                    language = track.label?.takeIf { it.isNotBlank() } ?: "Unknown",
+                    language = track.label?.takeIf { it.isNotBlank() }?.let(::cleanLabel)?.ifEmpty { null } ?: "Unknown",
                     url = file,
                 )
+            })
+
+        private fun disambiguate(subtitles: List<Subtitle>): List<Subtitle> {
+            val seen = HashMap<String, Int>()
+            val totals = subtitles.groupingBy { it.language }.eachCount()
+
+            return subtitles.map { subtitle ->
+                if ((totals[subtitle.language] ?: 0) < 2) return@map subtitle
+
+                val index = seen.merge(subtitle.language, 1, Int::plus)!!
+                subtitle.copy(language = "${subtitle.language} $index")
             }
+        }
     }
 }

@@ -4,7 +4,6 @@ import android.content.Context
 import com.abrogani.flixhq.api.USER_AGENT
 import com.abrogani.flixhq.dto.ServerDto
 import com.flixclusive.core.util.coroutines.FlxDispatchers.Companion.withMainContext
-import com.flixclusive.core.util.webview.WebViewDriverManager
 import com.flixclusive.model.provider.link.Flag
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
@@ -30,10 +29,7 @@ internal class ByseExtractor(
         val origin = embedUrl.toHttpUrl().let { "${it.scheme}://${it.host}" }
 
         val webView = withMainContext {
-            ByseWebView(context).also {
-                driver = it
-                WebViewDriverManager.register(it)
-            }
+            ByseWebView(context).also { driver = it }
         }
 
         try {
@@ -47,7 +43,7 @@ internal class ByseExtractor(
                     Stream(
                         name = source.label?.takeIf { it.isNotBlank() }?.let { "$name · $it" } ?: name,
                         url = source.url,
-                        flags = setOf(Flag.RequiresAuth(headers)),
+                        flags = setOfNotNull(Flag.RequiresAuth(headers), StreamExpiry.of(source.url)),
                     ),
                 )
             }

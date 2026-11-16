@@ -2,7 +2,6 @@ package com.abrogani.flixhq.extractors
 
 import com.abrogani.flixhq.dto.ServerDto
 import com.abrogani.flixhq.extensions.fetchText
-import com.flixclusive.model.provider.link.Flag
 import com.flixclusive.model.provider.link.MediaLink
 import com.flixclusive.model.provider.link.Stream
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +32,7 @@ internal class VidmolyExtractor(
                 name = name,
                 url = url,
                 description = "Auto",
-                flags = expiryOf(url)?.let { setOf(it) },
+                flags = StreamExpiry.of(url)?.let { setOf(it) },
             ),
         )
     }
@@ -46,11 +45,5 @@ internal class VidmolyExtractor(
             SOURCES.find(html)?.groupValues?.get(1)
                 ?: PLAYLIST.find(html)?.value
 
-        fun expiryOf(url: String): Flag.Expires? {
-            val parsed = url.toHttpUrlOrNull() ?: return null
-            val issuedAt = parsed.queryParameter("s")?.toLongOrNull() ?: return null
-            val lifetime = parsed.queryParameter("e")?.toLongOrNull() ?: return null
-            return Flag.Expires((issuedAt + lifetime) * 1000)
-        }
     }
 }

@@ -51,16 +51,39 @@ when no stream was found at all. Streams and subtitles are emitted as soon as th
 **Vidmoly.** The master playlist needs no `Referer`. The signed URL carries `s` (issued at, epoch seconds) and `e`
 (lifetime, seconds); the stream gets `Flag.Expires((s + e) * 1000)`.
 
-**Byse.** The embed is a React app that gates playback behind a "click play to verify you're a human" screen
-(`captcha-gate__play`), then a proof-of-work and an AES-GCM encrypted playback payload bound to a browser fingerprint.
-None of that is reimplemented. The embed URL is loaded in a visible `WebViewDriver` registered with
-`WebViewDriverManager`; the user taps play, the page decrypts its own payload, and the stream is captured from:
+**Byse.** The embed is a React app that gates playback behind a proof-of-work, an optional "click play to verify you're
+human" screen (`captcha-gate__play`) and an AES-GCM encrypted playback payload bound to a browser fingerprint. None of
+that is reimplemented. The embed URL is loaded in a visible `WebViewDriver`; the page decrypts its own payload and the
+stream is captured from:
 
 1. `jwplayer().getPlaylist()[0]` polled every 500 ms (`sources` and caption `tracks`), then
 2. any `.m3u8` / `.mp4` request seen in `shouldInterceptRequest`, preferring a `master` playlist.
 
-Capture times out after 90 s. Streams carry `Flag.RequiresAuth` with `Referer`, `Origin` and `User-Agent` of the embed
-host. The WebView is destroyed after each `getLinks` and again in `onUnload`.
+Capture times out after 90 s. Streams carry `Flag.RequiresAuth` (`Referer`, `Origin`, `User-Agent` of the embed host)
+and `Flag.Expires` from the signed `s` / `e` query parameters. The WebView is destroyed after each `getLinks` and again
+in `onUnload`. Page load, console and load errors are logged with the `ByseWebView` prefix.
+
+Do not call `WebViewDriverManager.register` yourself: `WebViewDriver.loadUrl` registers a non-headless driver, and
+`register` destroys whatever is registered first, so an extra call destroys the driver that is about to load.
+
+## Device verification
+
+Verified on the Flixclusive 3.0.1 release APK, Android 13 AVD (`Medium_Phone_33`, WebView 109).
+
+| Area | Result |
+|---|---|
+| Provider load | `FlixHQ-debug v2.0.0` listed with Links, Catalogs, Search, Metadata, Cross-match |
+| Catalogs | Home rows and hero populated from the genre catalogs |
+| Search, paging | Results and the Type filter render; broad queries return a paged grid |
+| Metadata | Movie (rating, runtime, language, year, certification, genre, overview) and series (seasons, episodes) |
+| Vidmoly | Stream plays (HLS master playlist, no headers needed) |
+| Byse | Page renders on WebView 109; `jwplayer` sources captured as `Byse · 1080p`; master playlist, variant playlist and first segment fetched by ExoPlayer |
+
+Observed host behaviour, not caused by the provider: on 3.0.1 the first playback of a session with sideloaded subtitles
+failed twice with `ExoPlaybackException` (`IllegalStateException` in `ProgressiveMediaPeriod.startLoading`), once with
+12 subtitle tracks and once with 2, while the same stream with no subtitles, and a later start in the same session, played.
+Subtitle labels are tidied (`English - [Eng] 2` becomes `English`, duplicates get an index) because the host feeds the
+label to `Locale.Builder().setLanguage`, which logs an `IllformedLocaleException` for free-form labels.
 
 ## Source layout
 

@@ -4,6 +4,7 @@ import com.abrogani.flixhq.dto.ServerDto
 import com.abrogani.flixhq.extensions.parseJson
 import com.abrogani.flixhq.extensions.toList
 import com.abrogani.flixhq.extractors.ByseCaptures
+import com.abrogani.flixhq.extractors.StreamExpiry
 import com.abrogani.flixhq.extractors.SubtitleResolver
 import com.abrogani.flixhq.extractors.VidmolyExtractor
 import com.flixclusive.model.provider.link.Flag
@@ -52,10 +53,10 @@ class FlixHQExtractorTest {
 
     @Test
     fun `vidmoly expiry comes from the signed url`() {
-        val flag = VidmolyExtractor.expiryOf("https://h/master.m3u8?t=x&s=1794816889&e=43200")
+        val flag = StreamExpiry.of("https://h/master.m3u8?t=x&s=1794816889&e=43200")
 
         expectThat(flag).isEqualTo(Flag.Expires((1794816889L + 43200L) * 1000))
-        expectThat(VidmolyExtractor.expiryOf("https://h/master.m3u8")).isNull()
+        expectThat(StreamExpiry.of("https://h/master.m3u8")).isNull()
     }
 
     @Test
@@ -63,8 +64,25 @@ class FlixHQExtractorTest {
         val subtitles = SubtitleResolver.parse(fixture("subtitles.json"))
 
         expectThat(subtitles).hasSize(12)
-        expectThat(subtitles.map { it.language }).contains("English - [Eng] 2")
+        expectThat(subtitles.map { it.language }).contains("English")
         expectThat(subtitles.all { it.url.startsWith("https://qqqcdn.cloud/") }).isTrue()
+    }
+
+    @Test
+    fun `subtitle labels lose the language code and index`() {
+        expectThat(SubtitleResolver.cleanLabel("English - [Eng] 2")).isEqualTo("English")
+        expectThat(SubtitleResolver.cleanLabel("English - Sdh [Eng] 3")).isEqualTo("English - Sdh")
+        expectThat(SubtitleResolver.cleanLabel("Norwegian Bokmål - [Nob] 11")).isEqualTo("Norwegian Bokmål")
+        expectThat(SubtitleResolver.cleanLabel("French")).isEqualTo("French")
+    }
+
+    @Test
+    fun `duplicate subtitle labels get an index`() {
+        val subtitles = SubtitleResolver.parse(fixture("subtitles.json"))
+        val spanish = subtitles.map { it.language }.filter { it.startsWith("Spanish") }
+
+        expectThat(spanish).isEqualTo(listOf("Spanish 1", "Spanish 2"))
+        expectThat(subtitles.map { it.language }.distinct()).hasSize(subtitles.size)
     }
 
     @Test

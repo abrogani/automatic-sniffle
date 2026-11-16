@@ -13,7 +13,7 @@ flxProvider {
         """
         Catalogs, search, metadata and cross-match for flixhqz.net, streaming through Vidmoly and Byse.
 
-        ⚠️ The Byse server runs in a WebView and asks you to tap play to verify you're human before its stream loads.
+        ⚠️ The Byse server runs in a WebView and may ask you to tap play to verify you're human before its stream loads.
         """.trimIndent()
 
     changelog =
