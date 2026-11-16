@@ -3,7 +3,7 @@
 #### List of available providers:
 | Name          | Status    |
 | :-----------  | :-------  |
-| FlixHQ | 🔴 DOWN |
+| FlixHQ | 🔵 BETA |
 | SuperStream | 🟢 OK |
 | LookMovie | 🟢 OK |
 | Stremio | 🟢 OK |
