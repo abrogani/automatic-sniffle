@@ -3,7 +3,7 @@ package com.abrogani.servetorr.engine
 import java.security.MessageDigest
 
 internal object EngineSource {
-    const val VERSION = "1"
+    const val VERSION = "2"
     const val AAR_URL = "https://github.com/abrogani/servetorr-engine/releases/download/v$VERSION/torrserver.aar"
 
     const val LIBRARY_NAME = "libgojni.so"
@@ -15,10 +15,10 @@ internal object EngineSource {
     const val SERVER_CLASS = "torrServer.TorrServer"
 
     val LIBRARY_SHA256 = linkedMapOf(
-        "arm64-v8a" to "cbfadf83b5dede4afe8bd8d04aba36cad6e605b305c940bad41d9fe435b2bcdf",
-        "armeabi-v7a" to "b69232f4741087a7b37ff8cc9c7792146eb803c754ce5e979e5e00a52f23c067",
-        "x86_64" to "541c4f5815edc98a7b6e77a0cadfca87759dbf44e806e8fcaef955e42d971ee6",
-        "x86" to "20232288aa478ed8d097bf14572b1559dbfe5cb8ad169056c3a4c88058dfb15d",
+        "arm64-v8a" to "11adb2eb8f3727fa542293b47a8afaf1c32234fca8ebd40db0cbdc6e320d0069",
+        "armeabi-v7a" to "49dedcda0aec69119eb59545c26d3c217632b87f6e550802f31d73622a3fcbf0",
+        "x86_64" to "54dc10f0fc3f0d23b0a084a9390aef806b1c643294221b78de0c140cede7389a",
+        "x86" to "d66b7567c939385f481f598d8ba98fc09f8c879c73345ebadfc54d12e50899ac",
     )
 
     const val MAX_ARCHIVE_BYTES = 64L * 1024 * 1024
