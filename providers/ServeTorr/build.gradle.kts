@@ -21,6 +21,10 @@ flxProvider {
 
     changelog =
         """
+        # v0.0.3
+
+        - Torrent engine updated to v4.
+
         # v0.0.2
 
         - Torrent engine updated to v1.
@@ -38,7 +42,7 @@ flxProvider {
 
     versionMajor = 0
     versionMinor = 0
-    versionPatch = 2
+    versionPatch = 3
     versionBuild = 0
 
     iconUrl = "https://i.imgur.com/8DkFv24.png"
